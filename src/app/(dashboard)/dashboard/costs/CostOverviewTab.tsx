@@ -125,6 +125,9 @@ interface UsageAnalyticsPayload {
 }
 
 const RANGE_OPTIONS: Array<{ value: CostRange; labelKey: string }> = [
+  { value: "1d", labelKey: "range1d" },
+  { value: "3d", labelKey: "range3d" },
+  { value: "5d", labelKey: "range5d" },
   { value: "7d", labelKey: "range7d" },
   { value: "30d", labelKey: "range30d" },
   { value: "90d", labelKey: "range90d" },
