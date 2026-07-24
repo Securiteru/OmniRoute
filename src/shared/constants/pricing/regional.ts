@@ -2,9 +2,7 @@
  * Pricing data — regional family (China + other regional providers (incl. GLM/Zhipu)).
  * Pure data; merged by default-pricing.ts via spread (god-file decomposition; semantic split).
  */
-import {
-  GLM_PRICING,
-} from "./shared-tiers";
+import { GLM_PRICING } from "./shared-tiers";
 
 export const DEFAULT_PRICING_REGIONAL = {
   glm: GLM_PRICING,
@@ -164,5 +162,73 @@ export const DEFAULT_PRICING_REGIONAL = {
       reasoning: 2.97,
       cache_creation: 0.38,
     },
+  },
+  // Alibaba / DashScope / Bailian Model Studio (OpenAI-compat).
+  // Rates are $/MTok from OpenRouter list prices for the closest public
+  // Qwen/GLM rows when Alibaba has not published a per-token card for a
+  // preview model. Update when DashScope publishes official rates.
+  alibaba: {
+    // Preview max tier — OpenRouter only lists qwen3.6-max-preview today;
+    // use that rate for 3.8-max-preview until a dedicated row lands.
+    "qwen3.8-max-preview": {
+      input: 1.04,
+      output: 6.24,
+      cached: 0.208,
+      reasoning: 6.24,
+      cache_creation: 1.3,
+    },
+    "qwen3.6-max-preview": {
+      input: 1.04,
+      output: 6.24,
+      cached: 0.208,
+      reasoning: 6.24,
+      cache_creation: 1.3,
+    },
+    "qwen3.7-max": {
+      input: 1.475,
+      output: 4.425,
+      cached: 0.295,
+      reasoning: 4.425,
+      cache_creation: 1.844,
+    },
+    "qwen3-max": {
+      input: 0.78,
+      output: 3.9,
+      cached: 0.156,
+      reasoning: 3.9,
+      cache_creation: 0.975,
+    },
+    "qwen3.7-plus": {
+      input: 0.4,
+      output: 1.2,
+      cached: 0.06,
+      reasoning: 1.2,
+      cache_creation: 0.4,
+    },
+    "glm-5.2": GLM_PRICING["glm-5.2"],
+  },
+  "alibaba-cn": {
+    "qwen3.8-max-preview": {
+      input: 1.04,
+      output: 6.24,
+      cached: 0.208,
+      reasoning: 6.24,
+      cache_creation: 1.3,
+    },
+    "qwen3.6-max-preview": {
+      input: 1.04,
+      output: 6.24,
+      cached: 0.208,
+      reasoning: 6.24,
+      cache_creation: 1.3,
+    },
+    "qwen3.7-max": {
+      input: 1.475,
+      output: 4.425,
+      cached: 0.295,
+      reasoning: 4.425,
+      cache_creation: 1.844,
+    },
+    "glm-5.2": GLM_PRICING["glm-5.2"],
   },
 };

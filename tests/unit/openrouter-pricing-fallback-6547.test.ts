@@ -81,6 +81,22 @@ const FIXTURE_CATALOG = {
         completion: "0.00000087",
       },
     },
+    {
+      id: "qwen/qwen3.6-max-preview",
+      pricing: {
+        prompt: "0.00000104",
+        completion: "0.00000624",
+        input_cache_write: "0.0000013",
+      },
+    },
+    {
+      id: "qwen/qwen3.7-max",
+      pricing: {
+        prompt: "0.000001475",
+        completion: "0.000004425",
+        input_cache_read: "0.000000295",
+      },
+    },
   ],
 };
 
@@ -144,12 +160,30 @@ test("lookupOpenRouterPricing: empty model → null", () => {
 });
 
 test("lookupOpenRouterPricing: glmt-5.2 (Z.AI variant) → z-ai/glm-5.2 NOT present", () => {
-  // Sanity: the fixture has `z-ai/glm-5` but not `z-ai/glm-5.2`. The lookup
-  // must NOT silently match a different version. (Coverage check: we don't
-  // pick a random row from the same provider just because the model isn't
-  // found — we return null.)
+  // Sanity: the fixture has `z-ai/glm-5` but not `z-ai/glm-5.2`. Nearby-version
+  // fuzzy matching only rewrites *dotted* versions, so `glm-5` (no dotted
+  // version) is never a candidate for `glm-5.2`.
   const r = lookupOpenRouterPricing(null, "glm-5.2");
   assert.equal(r, null, "should NOT match z-ai/glm-5 (different model)");
+});
+
+test("lookupOpenRouterPricing: qwen3.8-max-preview fuzzy-matches qwen3.6-max-preview", () => {
+  // OpenRouter does not list qwen3.8-max-preview yet; the nearest sibling is
+  // qwen3.6-max-preview (same skeleton, dotted version). Prefer the closest
+  // version that is not higher than the requested one.
+  const r = lookupOpenRouterPricing("alibaba", "qwen3.8-max-preview");
+  assert.ok(r, "should fuzzy-match a nearby max-preview row");
+  assert.equal(r!.openrouterId, "qwen/qwen3.6-max-preview");
+  assert.equal(r!.input, 1.04);
+  assert.equal(r!.output, 6.24);
+  assert.equal(r!.source, "openrouter");
+});
+
+test("lookupOpenRouterPricing: qwen3.7-max exact match beats fuzzy sibling", () => {
+  const r = lookupOpenRouterPricing(null, "qwen3.7-max");
+  assert.equal(r?.openrouterId, "qwen/qwen3.7-max");
+  assert.equal(r?.input, 1.475);
+  assert.equal(r?.output, 4.425);
 });
 
 test("lookupOpenRouterPricing: kimi-k2.5 → moonshotai/kimi-k2.5", () => {

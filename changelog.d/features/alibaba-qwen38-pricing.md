@@ -1,0 +1,1 @@
+- **fix(costs):** Cost Explorer no longer shows $0.00 for Alibaba `qwen3.8-max-preview` (and related Qwen max tiers). Added `alibaba` / `alibaba-cn` pricing blocks with OpenRouter-aligned rates, and a nearby-version OpenRouter fallback so preview models like `qwen3.8-max-preview` can reuse the closest public sibling (`qwen3.6-max-preview`) when an exact catalog row is missing.

@@ -288,7 +288,78 @@ export function lookupOpenRouterPricing(
     }
   }
 
+  // Nearby-version fallback: when the catalog has no exact row for a preview
+  // model (e.g. `qwen3.8-max-preview`) but does list a sibling with the same
+  // dotted-version skeleton (`qwen3.6-max-preview`), reuse that list price.
+  // Only dotted versions participate (so `glm-5.2` never matches `glm-5`).
+  const fuzzy = findNearbyVersionMatch(idx, candidates);
+  if (fuzzy?.pricing) {
+    return buildEntry(fuzzy.pricing, fuzzy.id);
+  }
+
   return null;
+}
+
+/**
+ * Match a candidate against catalog names that share the same skeleton after
+ * replacing dotted version numbers (`3.8`, `5.2`) with a placeholder.
+ * Example: `qwen3.8-max-preview` ↔ `qwen3.6-max-preview`.
+ * Prefers the closest version ≤ the requested one, then the absolute closest.
+ */
+function findNearbyVersionMatch(
+  idx: Map<string, OpenRouterCatalogEntry>,
+  candidates: string[]
+): OpenRouterCatalogEntry | null {
+  type Scored = { entry: OpenRouterCatalogEntry; distance: number; notHigher: boolean };
+  let best: Scored | null = null;
+
+  for (const candidate of candidates) {
+    const want = versionSkeleton(candidate);
+    if (!want) continue;
+
+    for (const [id, entry] of idx.entries()) {
+      if (!entry?.pricing) continue;
+      const slashIdx = id.lastIndexOf("/");
+      const name = slashIdx >= 0 ? id.slice(slashIdx + 1) : id;
+      const have = versionSkeleton(name);
+      if (!have) continue;
+      if (have.skeleton !== want.skeleton) continue;
+      if (have.versions.length !== want.versions.length) continue;
+
+      let distance = 0;
+      let notHigher = true;
+      for (let i = 0; i < want.versions.length; i++) {
+        const delta = have.versions[i] - want.versions[i];
+        distance += Math.abs(delta);
+        if (delta > 0) notHigher = false;
+      }
+      if (distance === 0) continue; // exact already handled above
+
+      if (
+        !best ||
+        (notHigher && !best.notHigher) ||
+        (notHigher === best.notHigher && distance < best.distance)
+      ) {
+        best = { entry, distance, notHigher };
+      }
+    }
+  }
+
+  return best?.entry ?? null;
+}
+
+/** Replace dotted version numbers with a placeholder; capture the numbers. */
+function versionSkeleton(name: string): { skeleton: string; versions: number[] } | null {
+  if (!name) return null;
+  const versions: number[] = [];
+  const skeleton = name.replace(/(\d+\.\d+(?:\.\d+)*)/g, (match) => {
+    const n = Number(match);
+    if (!Number.isFinite(n)) return match;
+    versions.push(n);
+    return "VERSION";
+  });
+  if (versions.length === 0) return null;
+  return { skeleton, versions };
 }
 
 function buildEntry(pricing: OpenRouterPricing, openrouterId: string): PricingEntry | null {
