@@ -152,13 +152,42 @@ export class DevinCliExecutor extends BaseExecutor {
 
         const env: NodeJS.ProcessEnv = { ...process.env };
         if (apiKey) env.WINDSURF_API_KEY = apiKey;
+        // Prefer DEVIN_MODEL so the session starts on the requested subscription
+        // model (e.g. swe-1-7 = SWE-1.7 Max). More reliable than set_config_option
+        // racing the model catalog load inside OmniRoute's spawn path.
+        if (model && model.trim()) {
+          env.DEVIN_MODEL = model.trim();
+        }
 
-        const child = spawn(devinBin, ["acp", "--agent-type", "summarizer"], {
+        // Use the default agent (not summarizer): summarizer has an empty model
+        // catalog and rejects session/set_config_option, so subscription models
+        // like swe-1-7 (SWE-1.7 Max) cannot be selected. Optional override:
+        // DEVIN_ACP_AGENT_TYPE=summarizer restores the tool-less agent.
+        const agentType = process.env.DEVIN_ACP_AGENT_TYPE?.trim();
+        const acpArgs = agentType ? ["acp", "--agent-type", agentType] : ["acp"];
+        const isWin = process.platform === "win32";
+        const child = spawn(devinBin, acpArgs, {
           env,
           stdio: ["pipe", "pipe", "pipe"],
           // On Windows, devin.exe may need shell resolution
-          shell: process.platform === "win32",
+          shell: isWin,
+          // Linux/macOS: run in its own process group so we can kill the whole tree.
+          detached: !isWin,
         });
+
+        // Safe, OS-level kill that is not gated by the ChildProcess `killed` flag.
+        const safeKill = (sig: NodeJS.Signals, group = false) => {
+          if (!child.pid) return;
+          try {
+            if (group && !isWin) {
+              process.kill(-child.pid, sig);
+            } else {
+              process.kill(child.pid, sig);
+            }
+          } catch {
+            /* ignore ESRCH / race */
+          }
+        };
 
         let spawnError: Error | null = null;
         let stdinClosed = false;
@@ -178,7 +207,10 @@ export class DevinCliExecutor extends BaseExecutor {
 
         if (signal) {
           signal.addEventListener("abort", () => {
-            if (!child.killed) child.kill("SIGTERM");
+            // SIGTERM first, then SIGKILL the whole process group after 2s.
+            safeKill("SIGTERM");
+            const abortKillTimer = setTimeout(() => safeKill("SIGKILL", true), 2000);
+            abortKillTimer.unref?.();
           });
         }
 
@@ -243,10 +275,8 @@ export class DevinCliExecutor extends BaseExecutor {
             /* ignore */
           }
 
-          // Give it 2s to exit cleanly, then SIGKILL
-          const killTimer = setTimeout(() => {
-            if (!child.killed) child.kill("SIGKILL");
-          }, 2000);
+          // Give it 2s to exit cleanly, then SIGKILL the whole process group.
+          const killTimer = setTimeout(() => safeKill("SIGKILL", true), 2000);
           killTimer.unref?.();
 
           controller.close();
@@ -274,10 +304,16 @@ export class DevinCliExecutor extends BaseExecutor {
             // ── Initialize response ───────────────────────────────────────
             if (!initDone && msg.result !== undefined && !msg.method) {
               initDone = true;
-              // Create session: send session/new with model and a temp cwd
+              // Create session. Devin CLI requires cwd + mcpServers (strict schema).
+              // Prefer a stable workspace under HOME — the OmniRoute process cwd is the
+              // Next standalone build dir, which can confuse tools/MCP discovery.
+              // Model is applied after session creation via set_config if supported;
+              // including unknown fields in session/new has caused -32602 on some builds.
+              const sessionCwd =
+                process.env.DEVIN_ACP_CWD?.trim() || process.env.HOME || process.cwd();
               sendRpc("session/new", {
-                cwd: process.cwd(),
-                model: model || undefined,
+                cwd: sessionCwd,
+                mcpServers: [],
               });
               continue;
             }
@@ -291,11 +327,10 @@ export class DevinCliExecutor extends BaseExecutor {
                 return;
               }
               sessionCreated = true;
-              // Send the prompt
               promptSent = true;
               sendRpc("session/prompt", {
                 sessionId,
-                content: [{ type: "text", text: promptText }],
+                prompt: [{ type: "text", text: promptText }],
               });
               continue;
             }
@@ -306,16 +341,31 @@ export class DevinCliExecutor extends BaseExecutor {
               continue;
             }
 
+            // ── Current Devin ACP completion notification ──────────────────
+            if (msg.method === "_cognition.ai/agent_stopped") {
+              finish();
+              return;
+            }
+
             // ── Streaming notifications (session/update) ──────────────────
             if (msg.method === "session/update" || msg.method === "$/update") {
               const params = msg.params as Record<string, unknown> | undefined;
               if (!params) continue;
 
-              const type = params.type as string | undefined;
+              const update = (params.update as Record<string, unknown> | undefined) || {};
+              const type = (params.type || update.sessionUpdate) as string | undefined;
+              const content = update.content ?? params.content;
 
-              if (type === "message_delta" || type === "text_delta" || type === "content_delta") {
+              if (
+                type === "message_delta" ||
+                type === "text_delta" ||
+                type === "content_delta" ||
+                type === "agent_message_chunk"
+              ) {
                 const delta =
-                  (params.content as string) ||
+                  (typeof content === "string"
+                    ? content
+                    : ((content as Record<string, unknown> | undefined)?.text as string)) ||
                   (params.delta as string) ||
                   (params.text as string) ||
                   "";
@@ -401,7 +451,15 @@ export class DevinCliExecutor extends BaseExecutor {
 
             // ── Error responses ───────────────────────────────────────────
             if (msg.error) {
-              finish(`Devin ACP error ${msg.error.code}: ${msg.error.message}`);
+              const detail =
+                msg.error.data !== undefined
+                  ? ` ${typeof msg.error.data === "string" ? msg.error.data : JSON.stringify(msg.error.data)}`
+                  : "";
+              log?.warn?.(
+                "DEVIN",
+                `ACP error id=${String(msg.id)} code=${msg.error.code} msg=${msg.error.message}${detail}`
+              );
+              finish(`Devin ACP error ${msg.error.code}: ${msg.error.message}${detail}`);
               return;
             }
           }
@@ -422,10 +480,12 @@ export class DevinCliExecutor extends BaseExecutor {
         });
 
         // ── Send initialize ───────────────────────────────────────────────
+        // Devin CLI 3000.x negotiates ACP protocolVersion 1 (string "0.3" also works,
+        // but integer 1 is the version the agent returns and documents).
         sendRpc("initialize", {
-          protocolVersion: "0.3",
+          protocolVersion: 1,
           clientInfo: { name: "omniroute", version: "1.0" },
-          capabilities: {},
+          clientCapabilities: {},
         });
       },
     });
