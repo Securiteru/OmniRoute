@@ -104,6 +104,12 @@ Default URLs:
 
 > ⚠️ **NEVER commit directly to `main`.** Always use feature branches.
 
+> ⛔ **NEVER hot-patch running containers, production instances, or `/opt/omniroute` directly.**
+> All changes — fixes, improvements, config tweaks — MUST go through:
+> **git branch → PR → merge → rebuild → deploy.**
+> Direct edits to containers are lost on rebuild and create untracked drift.
+> The git repository is the single source of truth.
+
 ```bash
 git checkout -b feat/your-feature-name
 # ... make changes ...
