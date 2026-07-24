@@ -1,5 +1,13 @@
 # OmniRoute PR and Coverage Instructions
 
+## Mandatory Workflow
+
+- **All changes to OmniRoute MUST go through git → PR → merge.** Never edit files directly in containers, production servers, or `/opt/omniroute`. The git repository is the single source of truth.
+- Create a feature/fix branch, make changes, add tests, open a PR, and wait for merge.
+- Direct container edits are lost on rebuild and create untracked drift between source and deployed code.
+
+## Coverage Gate
+
 - Treat `npm run test:coverage` as a required gate for PR work.
 - The repository minimum is `60%` for statements, lines, functions, and branches.
 - If a PR changes production code in `src/`, `open-sse/`, `electron/`, or `bin/`, it must include automated tests in the same PR.

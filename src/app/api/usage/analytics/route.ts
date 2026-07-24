@@ -275,7 +275,15 @@ function computeUsageRowCost(
       provider,
       model,
       serviceTier,
-      flatRateAsZero: true,
+      // #6547: drop the `flatRateAsZero: true` opt-in. The previous behavior
+      // rendered $0.00 for every token routed through a flat-rate / coding-plan
+      // provider (Minimax Coding, GLM Coding, Kiro, Kilo Code, OpenCode Free,
+      // Qwen Web, …) because the cost calculator short-circuited before the
+      // pricing row was consulted. The Cost Explorer now uses the per-token
+      // estimate (and falls back to the OpenRouter public price for models
+      // with no local row), so the dashboard surfaces a meaningful "what's
+      // this model worth" value. The flat-rate check itself stays in place
+      // for the budget / quota / routing paths, which never opt in.
     }
   );
 }

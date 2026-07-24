@@ -184,7 +184,7 @@ export async function computeAnalytics(
     const cost = computeCostFromPricing(pricingCache.get(pricingKey), entry.tokens, {
       provider: entry.provider,
       model: entry.model,
-      flatRateAsZero: true,
+      // #6547: drop flatRateAsZero — see analytics route comment
     });
 
     // Summary

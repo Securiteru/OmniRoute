@@ -3,6 +3,11 @@
  * Pure data; merged by default-pricing.ts via spread (god-file decomposition; semantic split).
  */
 import {
+  CLAUDE_OPUS_4_PRICING,
+  CLAUDE_SONNET_4_PRICING,
+  CLAUDE_SONNET_46_PRICING,
+  CLAUDE_SONNET_5_PRICING,
+  GLM_PRICING,
   GPT_5_3_CODEX_PRICING,
   GPT_5_5_PRICING,
   GPT_5_6_LUNA_PRICING,
@@ -598,4 +603,258 @@ export const DEFAULT_PRICING_OAUTH = {
     "gpt-5.6-terra": GPT_5_6_TERRA_PRICING,
     "gpt-5.6-luna": GPT_5_6_LUNA_PRICING,
   },
+  // #5460/#5465 — coding-plan OAuth / noauth providers were missing pricing
+  // rows, so getPricingForModel returned null and downstream cost / quota
+  // calculations silently fell back to $0 (UI showed `$0.00` or `—` for
+  // providers with non-zero token activity: Kilo Code 11.6M, OpenCode Free
+  // 106M over 30d; Minimax Coding 165M was also affected but its `minimax:`
+  // key was already defined in `regional.ts` and won the spread-merge).
+  //
+  // Convention used below:
+  //   - Pass-through models (Claude / GPT-5.6 / DeepSeek / GLM / Qwen /
+  //     MiniMax) → bill at the upstream $/MTok rate, matching what `kiro:`
+  //     / `cc:` already bill at for the same model id.
+  //   - Genuinely free models (Kilo `free` router, OpenCode Free `*-free`)
+  //     → explicit 0.0 across all five rate fields so the UI shows `$0.00`
+  //     instead of `—`.
+  //   - Unknown / not-yet-routed models → left out intentionally; the
+  //     lookup will keep returning null for those (preserves the existing
+  //     `source:"local_catalog",intentional:true` skip path on the API).
+  kc: {
+    // Kilo Code — anonymous-fallback OAuth coding plan (free + paid tiers).
+    // Upstream-model rows mirror `kiro:` / `cc:` rates so the Cost Explorer
+    // totals match what the same model would bill on a paid subscription.
+    "claude-opus-4.8": CLAUDE_OPUS_4_PRICING,
+    "claude-opus-4.7": CLAUDE_OPUS_4_PRICING,
+    "claude-opus-4.6": CLAUDE_OPUS_4_PRICING,
+    "claude-opus-4.5": CLAUDE_OPUS_4_PRICING,
+    "claude-opus-4.1": CLAUDE_OPUS_4_PRICING,
+    "claude-opus-4": CLAUDE_OPUS_4_PRICING,
+    "claude-sonnet-5": CLAUDE_SONNET_5_PRICING,
+    "claude-sonnet-4.6": CLAUDE_SONNET_46_PRICING,
+    "claude-sonnet-4.5": CLAUDE_SONNET_4_PRICING,
+    "claude-sonnet-4": CLAUDE_SONNET_4_PRICING,
+    "claude-haiku-4.5": {
+      input: 0.5,
+      output: 2.5,
+      cached: 0.05,
+      reasoning: 2.5,
+      cache_creation: 0.5,
+    },
+    "claude-3-haiku": {
+      input: 0.25,
+      output: 1.25,
+      cached: 0.03,
+      reasoning: 1.25,
+      cache_creation: 0.25,
+    },
+    "gpt-5.5": GPT_5_5_PRICING,
+    "gpt-5.6-sol": GPT_5_6_SOL_PRICING,
+    "gpt-5.6-terra": GPT_5_6_TERRA_PRICING,
+    "gpt-5.6-luna": GPT_5_6_LUNA_PRICING,
+    "deepseek-v4-pro": {
+      input: 0.27,
+      output: 1.1,
+      cached: 0.07,
+      reasoning: 1.1,
+      cache_creation: 0.27,
+    },
+    "deepseek-v4-flash": {
+      input: 0.06,
+      output: 0.24,
+      cached: 0.015,
+      reasoning: 0.24,
+      cache_creation: 0.06,
+    },
+    "minimax-m3": {
+      input: 0.5,
+      output: 2.0,
+      cached: 0.25,
+      reasoning: 3.0,
+      cache_creation: 0.5,
+    },
+    "minimax-m2.7": {
+      input: 0.3,
+      output: 1.2,
+      cached: 0.075,
+      reasoning: 1.2,
+      cache_creation: 0.3,
+    },
+    "minimax-m2.5": {
+      input: 0.27,
+      output: 0.95,
+      cached: 0.135,
+      reasoning: 1.425,
+      cache_creation: 0.27,
+    },
+    "minimax-m2.1": {
+      input: 0.4,
+      output: 1.6,
+      cached: 0.1,
+      reasoning: 1.6,
+      cache_creation: 0.4,
+    },
+    "glm-5.2": GLM_PRICING["glm-5.2"],
+    "qwen3.7-plus": {
+      input: 0.4,
+      output: 1.2,
+      cached: 0.06,
+      reasoning: 1.2,
+      cache_creation: 0.4,
+    },
+    "kimi-k3": {
+      input: 0.6,
+      output: 2.5,
+      cached: 0.15,
+      reasoning: 2.5,
+      cache_creation: 0.6,
+    },
+    // Kilo's free routing tier (`kilo-auto/free`) and the explicit
+    // anonymous-fallback `free` selector — both are $0 to the end user.
+    free: { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "kilo-auto/free": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "kilo-auto/balanced": {
+      // Kilo Pro / balanced router — paid tier, ~$0 amortized across the
+      // blended Claude/GPT/DeepSeek mix. Update once Kilo publishes a
+      // per-tier rate card.
+      input: 1.0,
+      output: 4.0,
+      cached: 0.25,
+      reasoning: 4.0,
+      cache_creation: 1.0,
+    },
+    "kilo-auto/efficient": {
+      input: 0.4,
+      output: 1.6,
+      cached: 0.1,
+      reasoning: 1.6,
+      cache_creation: 0.4,
+    },
+    "kilo-auto/frontier": CLAUDE_OPUS_4_PRICING,
+    "kilo-auto/small": {
+      input: 0.1,
+      output: 0.4,
+      cached: 0.025,
+      reasoning: 0.4,
+      cache_creation: 0.1,
+    },
+  },
+  oc: {
+    // OpenCode Free — public anonymous endpoint (`noAuth: true`,
+    // `hasFree: true`). All models on the public endpoint are zero-cost
+    // to the caller. Rows cover every model seen in the Cost Explorer
+    // (incl. the explicit `*-free` suffixes from the free-catalog data)
+    // so `getPricingForModel` never returns null for OpenCode and the
+    // dashboard stops showing `—`.
+    "deepseek-v4-flash-free": {
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      cache_creation: 0,
+    },
+    "deepseek-v4-pro-free": {
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      cache_creation: 0,
+    },
+    "minimax-m2.5-free": {
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      cache_creation: 0,
+    },
+    "minimax-m2.7-free": {
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      cache_creation: 0,
+    },
+    "minimax-m3-free": {
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      cache_creation: 0,
+    },
+    "ling-2.6-1t-free": {
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      cache_creation: 0,
+    },
+    "ling-3.0-flash:free": {
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      cache_creation: 0,
+    },
+    "trinity-large-preview-free": {
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      cache_creation: 0,
+    },
+    "nemotron-3-super-free": {
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      cache_creation: 0,
+    },
+    "nemotron-3-ultra-free": {
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      cache_creation: 0,
+    },
+    "qwen3.6-plus-free": {
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      cache_creation: 0,
+    },
+    "kimi-k2-thinking-free": {
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      cache_creation: 0,
+    },
+    "mimo-v2.5-free": {
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      cache_creation: 0,
+    },
+    "big-pickle": {
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      cache_creation: 0,
+    },
+    "kat-coder-pro-v2.5:free": {
+      input: 0,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      cache_creation: 0,
+    },
+  },
+  // MiniMax Coding (minimax.io) was deliberately NOT added here — its
+  // pricing block already lives in `regional.ts` and the spread-merge
+  // order in `default-pricing.ts` (REGIONAL last) means the regional
+  // rates win. If a coding-plan OAuth alias for MiniMax is ever added,
+  // put its rows here and rename the regional key to avoid the collision.
 };

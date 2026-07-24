@@ -159,7 +159,22 @@ export async function getPricingForModel(provider: string, model: string) {
     }
   }
 
-  if (!providerPricing) return null;
+  if (!providerPricing) {
+    // No local row for this provider or any of its aliases — fall back to the
+    // OpenRouter public catalog. The user's coding-plan / flat-rate
+    // connections (e.g. provider="ADI_SUB", model="MiniMax-M3") never have
+    // per-token pricing rows because the user pays a fixed monthly fee; the
+    // Cost Explorer was rendering $0.00 for these. Issue #6547: use the
+    // upstream list price as the cost-estimation primitive so the dashboard
+    // surfaces a meaningful "what's this model worth" value, not $0.00.
+    // Skip when the model name is empty (no point looking up an empty model).
+    if (model && typeof model === "string" && model.trim()) {
+      const { lookupOpenRouterPricing } = await import("@/lib/pricing/openrouterPricingLookup");
+      const fallback = lookupOpenRouterPricing(pLower, model);
+      if (fallback) return fallback;
+    }
+    return null;
+  }
 
   const mLower = (model || "").toLowerCase();
   let modelPricing = findKeyInsensitive<JsonRecord>(providerPricing, mLower);
@@ -167,6 +182,17 @@ export async function getPricingForModel(provider: string, model: string) {
   if (!modelPricing) {
     const hyphenModel = mLower.replace(/\./g, "-");
     modelPricing = findKeyInsensitive(providerPricing, hyphenModel);
+  }
+
+  if (!modelPricing) {
+    // Local provider row exists, but no model matches. Try OpenRouter as a
+    // fallback — e.g. a metered provider whose local price table hasn't been
+    // updated to the latest model name, or a free-tier model without a row.
+    if (model && typeof model === "string" && model.trim()) {
+      const { lookupOpenRouterPricing } = await import("@/lib/pricing/openrouterPricingLookup");
+      const fallback = lookupOpenRouterPricing(pLower, model);
+      if (fallback) return fallback;
+    }
   }
 
   return modelPricing || null;

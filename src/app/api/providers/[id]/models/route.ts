@@ -200,6 +200,8 @@ export async function GET(
           connectionId: id,
           models: visible,
           source: "local_catalog",
+          // For no-auth providers the bundled catalog is the intended source.
+          intentional: true,
         });
       }
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
@@ -219,6 +221,9 @@ export async function GET(
     if (!provider) {
       return NextResponse.json({ error: "Invalid connection provider" }, { status: 400 });
     }
+
+    const isNoAuthProvider =
+      (NOAUTH_PROVIDERS as Record<string, { noAuth?: boolean }>)[provider]?.noAuth === true;
 
     // Resolve proxy for this provider (provider-level → global → direct)
     const proxy = await resolveProxyForProvider(provider);
@@ -1176,6 +1181,7 @@ export async function GET(
         const fallback = buildDiscoveryFallbackResponse({
           cacheWarning: `cursor-agent unavailable (${message}) — using cached catalog`,
           localWarning: `cursor-agent unavailable (${message}) — using local catalog`,
+          localIntentional: true,
         });
         if (fallback) return fallback;
         return NextResponse.json(
@@ -1864,10 +1870,17 @@ export async function GET(
       });
     }
     if (!config) {
-      return NextResponse.json(
-        { error: `Provider ${provider} does not support models listing` },
-        { status: 400 }
-      );
+      // Providers with no discovery config (embeddings/rerank/web-cookie/tool
+      // providers) intentionally have no remote model listing. Return an empty
+      // local catalog instead of 400 so model-sync treats it as a clean skip.
+      return buildResponse({
+        provider,
+        connectionId,
+        models: [],
+        source: "local_catalog",
+        intentional: true,
+        warning: `Provider ${provider} does not support models listing`,
+      });
     }
 
     const cachedResponse = maybeReturnCachedDiscovery();
@@ -1882,6 +1895,7 @@ export async function GET(
       const fallback = buildDiscoveryFallbackResponse({
         cacheWarning: "No token configured — using cached catalog",
         localWarning: "No token configured — using local catalog",
+        localIntentional: isNoAuthProvider,
       });
       if (fallback) return fallback;
       return NextResponse.json(

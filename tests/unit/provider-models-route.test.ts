@@ -1698,17 +1698,21 @@ test("provider models route discovers SAP models from AI_API_URL derived from de
   ]);
 });
 
-test("provider models route rejects unsupported providers without a models config", async () => {
+test("provider models route returns empty catalog for unsupported providers without a models config", async () => {
   const connection = await seedConnection("unsupported-provider", {
     apiKey: "sk-unsupported",
   });
 
   const response = await callRoute(connection.id);
 
-  assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), {
-    error: "Provider unsupported-provider does not support models listing",
-  });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.provider, "unsupported-provider");
+  assert.equal(body.connectionId, connection.id);
+  assert.deepEqual(body.models, []);
+  assert.equal(body.source, "local_catalog");
+  assert.equal(body.intentional, true);
+  assert.equal(body.warning, "Provider unsupported-provider does not support models listing");
 });
 
 test("provider models route uses provider-specific auth headers for Kimi Coding", async () => {
