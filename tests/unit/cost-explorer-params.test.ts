@@ -9,9 +9,15 @@ import {
 // ─── parseCostRange ────────────────────────────────────────────────────────
 
 test("parseCostRange accepts every valid range", () => {
-  for (const r of ["7d", "30d", "90d", "180d", "365d", "all"]) {
+  for (const r of ["1d", "3d", "5d", "7d", "30d", "90d", "180d", "365d", "all"]) {
     assert.equal(parseCostRange(r), r);
   }
+});
+
+test("parseCostRange accepts the short 1d/3d/5d periods", () => {
+  assert.equal(parseCostRange("1d"), "1d");
+  assert.equal(parseCostRange("3d"), "3d");
+  assert.equal(parseCostRange("5d"), "5d");
 });
 
 test("parseCostRange accepts the extended 180d/365d periods (#7213)", () => {
