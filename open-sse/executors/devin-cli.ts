@@ -31,6 +31,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { BaseExecutor, type ExecuteInput, type ProviderCredentials } from "./base.ts";
+import { safeKillWithGroup } from "../utils/safeKill.ts";
 
 // ─── Binary discovery ────────────────────────────────────────────────────────
 
@@ -176,17 +177,10 @@ export class DevinCliExecutor extends BaseExecutor {
         });
 
         // Safe, OS-level kill that is not gated by the ChildProcess `killed` flag.
+        // Implementation lives in open-sse/utils/safeKill.ts so it can be exercised
+        // by tests without spinning up a full ACP session.
         const safeKill = (sig: NodeJS.Signals, group = false) => {
-          if (!child.pid) return;
-          try {
-            if (group && !isWin) {
-              process.kill(-child.pid, sig);
-            } else {
-              process.kill(child.pid, sig);
-            }
-          } catch {
-            /* ignore ESRCH / race */
-          }
+          safeKillWithGroup(child, sig, { group });
         };
 
         let spawnError: Error | null = null;
