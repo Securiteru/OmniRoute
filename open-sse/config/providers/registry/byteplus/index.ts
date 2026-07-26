@@ -12,6 +12,7 @@ export const byteplusProvider: RegistryEntry = {
   authType: "apikey",
   authHeader: "bearer",
   defaultContextLength: 128000,
+  passthroughModels: true,
   models: [
     { id: "deepseek-r1-250120", name: "DeepSeek R1 (250120)", supportsReasoning: true },
     { id: "deepseek-r1-250528", name: "DeepSeek R1 (250528)", supportsReasoning: true },
