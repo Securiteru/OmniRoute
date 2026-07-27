@@ -1,73 +1,40 @@
 import type { RegistryEntry } from "../../shared.ts";
 
 // BytePlus ModelArk (Ark) — OpenAI-compatible, ap-southeast-1 region, Bearer auth.
-// All 51 models from /api/providers/24cff978-2a62-4999-984e-24da6506bbb0/models
+//
+// Coding Plan base URL: https://ark.ap-southeast.bytepluses.com/api/coding/v3
+// ⚠️ Do NOT use https://ark.ap-southeast.bytepluses.com/api/v3 — that is the
+// Pay-As-You-Go endpoint. Requests there do NOT consume the Coding Plan quota
+// and instead incur additional charges.
+//
+// Only the models below are supported by the Coding Plan endpoint; the PAYG
+// /models catalog returns 51 models but ~42 of them return
+// `UnsupportedModel` against /api/coding/v3/*. The list was verified by
+// probing each candidate against /api/coding/v3/chat/completions (200 == OK).
+// `ark-code-latest` is BytePlus's meta-router that auto-selects an optimal
+// model. Both the dated IDs and their aliases (e.g. glm-5.2 / glm-5-2-260617)
+// are accepted; we register the dated IDs to match /models.
 export const byteplusProvider: RegistryEntry = {
   id: "byteplus",
   alias: "bpm",
   format: "openai",
   executor: "default",
-  baseUrl: "https://ark.ap-southeast.bytepluses.com/api/v3/chat/completions",
-  modelsUrl: "https://ark.ap-southeast.bytepluses.com/api/v3/models",
+  baseUrl: "https://ark.ap-southeast.bytepluses.com/api/coding/v3/chat/completions",
+  modelsUrl: "https://ark.ap-southeast.bytepluses.com/api/coding/v3/models",
   authType: "apikey",
   authHeader: "bearer",
   defaultContextLength: 128000,
   passthroughModels: true,
   models: [
-    { id: "deepseek-r1-250120", name: "DeepSeek R1 (250120)", supportsReasoning: true },
-    { id: "deepseek-r1-250528", name: "DeepSeek R1 (250528)", supportsReasoning: true },
-    {
-      id: "deepseek-r1-distill-qwen-32b-250120",
-      name: "DeepSeek R1 Distill Qwen 32B",
-      supportsReasoning: true,
-    },
-    { id: "deepseek-v3", name: "DeepSeek V3" },
-    { id: "deepseek-v3-1-250821", name: "DeepSeek V3.1" },
-    { id: "deepseek-v3-2-251201", name: "DeepSeek V3.2" },
-    { id: "deepseek-v3-241226", name: "DeepSeek V3 (241226)" },
+    { id: "ark-code-latest", name: "Ark Code Latest (auto-router)", supportsReasoning: true },
+    { id: "seed-2-0-pro-260328", name: "Dola Seed 2.0 Pro", supportsReasoning: true },
+    { id: "seed-2-0-lite-260228", name: "Dola Seed 2.0 Lite" },
+    { id: "seed-2-0-code-preview-260328", name: "Dola Seed 2.0 Code", supportsReasoning: true },
+    { id: "glm-5-2-260617", name: "GLM 5.2", supportsReasoning: true },
+    { id: "glm-5-1-260408", name: "GLM 5.1", supportsReasoning: true },
     { id: "deepseek-v4-flash-260425", name: "DeepSeek V4 Flash", supportsReasoning: true },
     { id: "deepseek-v4-pro-260425", name: "DeepSeek V4 Pro", supportsReasoning: true },
-    { id: "glm-4-7-251222", name: "GLM 4.7" },
-    { id: "glm-5-2-260617", name: "GLM 5.2", supportsReasoning: true },
+    { id: "kimi-k2-5-260127", name: "Kimi K2.5" },
     { id: "gpt-oss-120b-250805", name: "GPT-OSS-120B", supportsReasoning: true },
-    { id: "kimi-k2-250711", name: "Kimi K2 (250711)" },
-    { id: "kimi-k2-250905", name: "Kimi K2 (250905)" },
-    { id: "kimi-k2-thinking-251104", name: "Kimi K2 Thinking", supportsReasoning: true },
-    { id: "seed-1-6-250615", name: "Seed 1.6" },
-    { id: "seed-1-6-250915", name: "Seed 1.6 (250915)" },
-    { id: "seed-1-6-flash-250615", name: "Seed 1.6 Flash" },
-    { id: "seed-1-6-flash-250715", name: "Seed 1.6 Flash (250715)" },
-    { id: "seed-1-8-251228", name: "Seed 1.8" },
-    { id: "seed-2-0-code-preview-260328", name: "Seed 2.0 Code Preview", supportsReasoning: true },
-    { id: "seed-2-0-lite-260228", name: "Seed 2.0 Lite" },
-    { id: "seed-2-0-lite-260428", name: "Seed 2.0 Lite (260428)" },
-    { id: "seed-2-0-mini-260215", name: "Seed 2.0 Mini" },
-    { id: "seed-2-0-mini-260428", name: "Seed 2.0 Mini (260428)" },
-    { id: "seed-2-0-pro-260328", name: "Seed 2.0 Pro", supportsReasoning: true },
-    { id: "seed-translation-250915", name: "Seed Translation" },
-    { id: "dola-seed-2-1-turbo-260628", name: "Dola Seed 2.1 Turbo" },
-    { id: "dola-seedream-5-0-pro-260628", name: "Dola Seedream 5.0 Pro" },
-    { id: "dreamina-seedance-2-0-260128", name: "Dreamina Seedance 2.0" },
-    { id: "dreamina-seedance-2-0-fast-260128", name: "Dreamina Seedance 2.0 Fast" },
-    { id: "dreamina-seedance-2-0-mini-260615", name: "Dreamina Seedance 2.0 Mini" },
-    { id: "hitem3d-2-0-251223", name: "HiTeM3D 2.0" },
-    { id: "hyper3d-gen2-260112", name: "Hyper3D Gen2" },
-    { id: "seedance-1-0-lite-i2v-250428", name: "Seedance 1.0 Lite I2V" },
-    { id: "seedance-1-0-lite-t2v-250428", name: "Seedance 1.0 Lite T2V" },
-    { id: "seedance-1-0-pro-250528", name: "Seedance 1.0 Pro" },
-    { id: "seedance-1-0-pro-fast-251015", name: "Seedance 1.0 Pro Fast" },
-    { id: "seedance-1-5-pro-251215", name: "Seedance 1.5 Pro" },
-    { id: "seededit-3-0-i2i-250628", name: "Seededit 3.0 I2I" },
-    { id: "seedream-3-0-t2i-250415", name: "Seedream 3.0 T2I" },
-    { id: "seedream-4-0-250828", name: "Seedream 4.0" },
-    { id: "seedream-4-5-251128", name: "Seedream 4.5" },
-    { id: "seedream-5-0-260128", name: "Seedream 5.0" },
-    { id: "skylark-embedding-vision-250328", name: "Skylark Embedding Vision" },
-    { id: "skylark-embedding-vision-250615", name: "Skylark Embedding Vision (250615)" },
-    { id: "skylark-embedding-vision-251215", name: "Skylark Embedding Vision (251215)" },
-    { id: "skylark-lite-250215", name: "Skylark Lite" },
-    { id: "skylark-pro", name: "Skylark Pro" },
-    { id: "skylark-pro-250215", name: "Skylark Pro (250215)" },
-    { id: "skylark-vision-250515", name: "Skylark Vision" },
   ],
 };
