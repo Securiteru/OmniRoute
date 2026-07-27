@@ -1,0 +1,1 @@
+- **fix(devin-cli):** extract safeKill into `open-sse/utils/safeKill.ts` and add an end-to-end process-group kill test so orphaned `devin acp` subprocesses are reaped when the executor's request finishes or is aborted ([#PR](https://github.com/Securiteru/OmniRoute/pull/PR)) — thanks @securiteradmin
