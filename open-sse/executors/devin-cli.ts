@@ -30,6 +30,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import { BaseExecutor, type ExecuteInput, type ProviderCredentials } from "./base.ts";
 import { safeKillWithGroup } from "../utils/safeKill.ts";
 
@@ -160,6 +161,33 @@ export class DevinCliExecutor extends BaseExecutor {
           env.DEVIN_MODEL = model.trim();
         }
 
+        // Write credentials.toml so the devin binary can authenticate.
+        // The devin CLI reads from ~/.local/share/devin/credentials.toml — it
+        // does NOT read WINDSURF_API_KEY from env vars. We write a temp file
+        // and point HOME there so the binary finds it.
+        let credDir: string | null = null;
+        if (apiKey) {
+          try {
+            credDir = path.join(os.tmpdir(), `devin-cred-${randomUUID()}`);
+            const devinShareDir = path.join(credDir, ".local", "share", "devin");
+            fs.mkdirSync(devinShareDir, { recursive: true });
+            const credContent = [
+              `windsurf_api_key = "${apiKey}"`,
+              `api_server_url = "https://server.codeium.com"`,
+              `devin_webapp_host = "app.devin.ai"`,
+              `devin_api_url = "https://api.devin.ai"`,
+              "",
+            ].join("\n");
+            fs.writeFileSync(path.join(devinShareDir, "credentials.toml"), credContent, {
+              mode: 0o600,
+            });
+            env.HOME = credDir;
+          } catch {
+            // If we can't write the credentials file, continue — the devin
+            // binary may fall back to WINDSURF_API_KEY or pre-existing creds.
+          }
+        }
+
         // Use the default agent (not summarizer): summarizer has an empty model
         // catalog and rejects session/set_config_option, so subscription models
         // like swe-1-7 (SWE-1.7 Max) cannot be selected. Optional override:
@@ -272,6 +300,15 @@ export class DevinCliExecutor extends BaseExecutor {
           // Give it 2s to exit cleanly, then SIGKILL the whole process group.
           const killTimer = setTimeout(() => safeKill("SIGKILL", true), 2000);
           killTimer.unref?.();
+
+          // Clean up temp credentials directory
+          if (credDir) {
+            try {
+              fs.rmSync(credDir, { recursive: true, force: true });
+            } catch {
+              /* ignore */
+            }
+          }
 
           controller.close();
         };
