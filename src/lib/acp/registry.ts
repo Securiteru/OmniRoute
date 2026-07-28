@@ -168,6 +168,15 @@ const AGENT_DEFINITIONS: Omit<CliAgentInfo, "version" | "installed">[] = [
     spawnArgs: [],
     protocol: "stdio",
   },
+  {
+    id: "droid",
+    name: "Factory Droid",
+    binary: "droid",
+    versionCommand: "droid --version",
+    providerAlias: "droid",
+    spawnArgs: ["exec", "--output-format", "acp"],
+    protocol: "stdio",
+  },
 ];
 
 // ---------------------------------------------------------------------------
