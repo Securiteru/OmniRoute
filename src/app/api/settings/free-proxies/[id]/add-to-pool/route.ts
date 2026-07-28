@@ -10,15 +10,19 @@ import {
 type ConnectivityTester = (
   host: string,
   port: number,
-  type: string
+  type: string,
+  username?: string | null,
+  password?: string | null
 ) => Promise<{ success: boolean; latencyMs: number; publicIp?: string }>;
 
 async function testProxyConnectivity(
   host: string,
   port: number,
-  type: string
+  type: string,
+  username?: string | null,
+  password?: string | null
 ): Promise<{ success: boolean; latencyMs: number; publicIp?: string }> {
-  const proxyUrl = proxyConfigToUrl({ type, host, port });
+  const proxyUrl = proxyConfigToUrl({ type, host, port, username, password });
   if (!proxyUrl) return { success: false, latencyMs: 0 };
 
   const dispatcher = createProxyDispatcher(proxyUrl);
@@ -77,7 +81,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   }
 
   try {
-    const testResult = await _connectivityTester(freeProxy.host, freeProxy.port, freeProxy.type);
+    const testResult = await _connectivityTester(
+      freeProxy.host,
+      freeProxy.port,
+      freeProxy.type,
+      freeProxy.username,
+      freeProxy.password
+    );
     if (!testResult.success) {
       // #4878: a failed connectivity probe must surface a non-2xx status so the
       // frontend (which gates on res.ok) does NOT optimistically mark the proxy
@@ -98,6 +108,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       host: freeProxy.host,
       port: freeProxy.port,
       source: freeProxy.source,
+      username: freeProxy.username,
+      password: freeProxy.password,
     });
 
     if (!newPoolProxyId) {

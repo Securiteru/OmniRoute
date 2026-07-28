@@ -14,6 +14,8 @@ export interface FreeProxyRecord {
   latencyMs: number | null;
   anonymity: string | null;
   lastValidated: string | null;
+  username: string | null;
+  password: string | null;
   inPool: boolean;
   poolProxyId: string | null;
   createdAt: string;
@@ -46,6 +48,8 @@ function mapRow(row: unknown): FreeProxyRecord {
     latencyMs: r.latency_ms != null ? Number(r.latency_ms) : null,
     anonymity: r.anonymity != null ? String(r.anonymity) : null,
     lastValidated: r.last_validated != null ? String(r.last_validated) : null,
+    username: r.username != null ? String(r.username) : null,
+    password: r.password != null ? String(r.password) : null,
     inPool: r.in_pool === 1 || r.in_pool === true,
     poolProxyId: r.pool_proxy_id != null ? String(r.pool_proxy_id) : null,
     createdAt: String(r.created_at ?? ""),
@@ -67,7 +71,7 @@ export async function upsertFreeProxy(
     db.prepare(
       `UPDATE free_proxies
        SET type = ?, country_code = ?, quality_score = ?, latency_ms = ?,
-           anonymity = ?, last_validated = ?, updated_at = ?
+           anonymity = ?, last_validated = ?, username = ?, password = ?, updated_at = ?
        WHERE id = ?`
     ).run(
       item.type,
@@ -76,6 +80,8 @@ export async function upsertFreeProxy(
       item.latencyMs ?? null,
       item.anonymity ?? null,
       item.lastValidated ?? now,
+      item.username ?? null,
+      item.password ?? null,
       now,
       existing.id
     );
@@ -86,8 +92,8 @@ export async function upsertFreeProxy(
   db.prepare(
     `INSERT INTO free_proxies
      (id, source, host, port, type, country_code, quality_score, latency_ms,
-      anonymity, last_validated, in_pool, pool_proxy_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)`
+      anonymity, last_validated, username, password, in_pool, pool_proxy_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)`
   ).run(
     id,
     item.source,
@@ -99,6 +105,8 @@ export async function upsertFreeProxy(
     item.latencyMs ?? null,
     item.anonymity ?? null,
     item.lastValidated ?? now,
+    item.username ?? null,
+    item.password ?? null,
     now,
     now
   );
@@ -276,6 +284,8 @@ export async function promoteFreeProxyToPool(
     host: string;
     port: number;
     source: string;
+    username?: string | null;
+    password?: string | null;
   }
 ): Promise<string | null> {
   const db = getDbInstance();
@@ -291,13 +301,15 @@ export async function promoteFreeProxyToPool(
     db.prepare(
       `INSERT INTO proxy_registry
         (id, name, type, host, port, username, password, region, notes, status, source, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, '', '', NULL, NULL, 'active', ?, ?, ?)`
+        VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'active', ?, ?, ?)`
     ).run(
       newRegistryId,
       registryPayload.name,
       registryPayload.type,
       registryPayload.host,
       Number(registryPayload.port),
+      registryPayload.username || "",
+      registryPayload.password || "",
       registryPayload.source,
       now,
       now

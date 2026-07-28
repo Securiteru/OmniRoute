@@ -10,6 +10,8 @@ export interface FreeProxyItem {
   latencyMs: number | null;
   anonymity: string | null; // 'elite' | 'anonymous' | 'transparent'
   lastValidated: string | null; // ISO timestamp
+  username?: string | null; // proxy auth username (Webshare, etc.)
+  password?: string | null; // proxy auth password (Webshare, etc.)
 }
 
 export interface FreeProxySyncResult {

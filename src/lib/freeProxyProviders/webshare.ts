@@ -13,6 +13,8 @@ type WebshareApiProxy = {
   valid?: boolean;
   country_code?: string | null;
   last_verification?: string | null;
+  username?: string | null;
+  password?: string | null;
 };
 
 type WebshareApiResponse = {
@@ -72,7 +74,10 @@ export class WebshareProvider implements FreeProxyProvider {
         const url = new URL(apiUrl);
         url.searchParams.set("mode", "direct");
         url.searchParams.set("page", String(page));
-        url.searchParams.set("page_size", String(Math.min(DEFAULT_PAGE_SIZE, maxProxies - fetched)));
+        url.searchParams.set(
+          "page_size",
+          String(Math.min(DEFAULT_PAGE_SIZE, maxProxies - fetched))
+        );
 
         const res = await fetch(url, {
           signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
@@ -112,6 +117,8 @@ export class WebshareProvider implements FreeProxyProvider {
             latencyMs: null,
             anonymity: null,
             lastValidated: p.last_verification || new Date().toISOString(),
+            username: p.username || null,
+            password: p.password || null,
           };
           const result = await upsertFreeProxy(item);
           if (result.action === "created") added++;
