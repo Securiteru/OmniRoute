@@ -30,6 +30,7 @@ import { WindsurfExecutor } from "./windsurf.ts";
 import { ZedHostedExecutor } from "./zed-hosted.ts";
 import { DevinCliExecutor } from "./devin-cli.ts";
 import { AuggieExecutor } from "./auggie.ts";
+import { DroidExecutor } from "./droid.ts";
 import { DeepSeekWebExecutor } from "./deepseek-web.ts";
 import { DeepSeekWebWithAutoRefreshExecutor } from "./deepseek-web-with-auto-refresh.ts";
 import { AdaptaWebExecutor } from "./adapta-web.ts";
@@ -174,6 +175,7 @@ const executors = {
   "zenmux-free": new ZenmuxFreeExecutor(),
   zmf: new ZenmuxFreeExecutor(), // Alias for zenmux-free
   auggie: new AuggieExecutor(),
+  droid: new DroidExecutor(),
   xai: new XaiExecutor(),
 };
 
@@ -240,6 +242,7 @@ export { WindsurfExecutor } from "./windsurf.ts";
 export { ZedHostedExecutor } from "./zed-hosted.ts";
 export { DevinCliExecutor } from "./devin-cli.ts";
 export { AuggieExecutor } from "./auggie.ts";
+export { DroidExecutor } from "./droid.ts";
 export { CopilotWebExecutor } from "./copilot-web.ts";
 export { CopilotM365WebExecutor } from "./copilot-m365-web.ts";
 export { MicrosoftDesignerWebExecutor } from "./microsoft-designer-web.ts";

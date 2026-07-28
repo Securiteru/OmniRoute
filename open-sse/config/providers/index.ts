@@ -153,6 +153,7 @@ import { bailian_coding_planProvider } from "./registry/bailian-coding-plan/inde
 import { gigachatProvider } from "./registry/gigachat/index.ts";
 import { devin_cliProvider } from "./registry/devin-cli/index.ts";
 import { auggieProvider } from "./registry/auggie/index.ts";
+import { droidProvider } from "./registry/droid/index.ts";
 import { chutesProvider } from "./registry/chutes/index.ts";
 import { chenzkProvider } from "./registry/chenzk/index.ts";
 import { factoryProvider } from "./registry/factory/index.ts";
@@ -343,6 +344,7 @@ export const REGISTRY: Record<string, RegistryEntry> = {
   gigachat: gigachatProvider,
   "devin-cli": devin_cliProvider,
   auggie: auggieProvider,
+  droid: droidProvider,
   chutes: chutesProvider,
   chenzk: chenzkProvider,
   factory: factoryProvider,
