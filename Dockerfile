@@ -229,4 +229,11 @@ RUN --mount=type=cache,id=apt-cache,target=/var/cache/apt,sharing=locked \
 RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
   npm install -g --no-audit --no-fund @openai/codex @anthropic-ai/claude-code droid openclaw@latest
 
+# Install Devin CLI (standalone binary from Codeium/Windsurf, not an npm package).
+# The install script places the binary at ~/.local/share/devin/cli/_versions/current/bin/devin
+# and symlinks it into ~/.local/bin/devin. We add both to PATH for the node user.
+RUN curl -fsSL https://cli.devin.ai/install.sh | bash \
+  && ln -sf /root/.local/bin/devin /usr/local/bin/devin \
+  && ln -sf /root/.local/share/devin/cli/_versions/current/bin/devin /usr/local/bin/devin
+
 USER node
