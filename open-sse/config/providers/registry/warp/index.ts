@@ -107,6 +107,32 @@ export const warpProvider: RegistryEntry = {
     { id: "glm-5.2-fireworks", name: "GLM 5.2 (Warp)", contextLength: 128000, toolCalling: true },
     // Kimi
     { id: "kimi-k3-fireworks", name: "Kimi K3 (Warp)", contextLength: 128000, toolCalling: true },
+    {
+      id: "kimi-k27-code-fireworks",
+      name: "Kimi K2.7 Code (Warp)",
+      contextLength: 128000,
+      toolCalling: true,
+    },
+    // MiniMax
+    {
+      id: "minimax-3-fireworks",
+      name: "MiniMax M3 (Warp)",
+      contextLength: 128000,
+      toolCalling: true,
+    },
+    {
+      id: "minimax-2.7-fireworks",
+      name: "MiniMax M2.7 (Warp)",
+      contextLength: 128000,
+      toolCalling: true,
+    },
+    // Qwen
+    {
+      id: "qwen-3.7-plus-fireworks",
+      name: "Qwen 3.7 Plus (Warp)",
+      contextLength: 128000,
+      toolCalling: true,
+    },
     // Auto
     { id: "auto", name: "Auto (Warp)", contextLength: 200000, toolCalling: true },
     {
@@ -116,5 +142,6 @@ export const warpProvider: RegistryEntry = {
       toolCalling: true,
     },
     { id: "auto-genius", name: "Auto Genius (Warp)", contextLength: 200000, toolCalling: true },
+    { id: "auto-open", name: "Auto Open (Warp)", contextLength: 200000, toolCalling: true },
   ],
 };
