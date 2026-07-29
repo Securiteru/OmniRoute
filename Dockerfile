@@ -235,6 +235,7 @@ RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
 # at that point, so we ignore the exit code and just create the symlink.
 RUN curl -fsSL https://cli.devin.ai/install.sh | bash || true \
   && test -f /root/.local/bin/devin \
-  && ln -sf /root/.local/bin/devin /usr/local/bin/devin
+  && cp /root/.local/bin/devin /usr/local/bin/devin \
+  && chmod 755 /usr/local/bin/devin
 
 USER node
