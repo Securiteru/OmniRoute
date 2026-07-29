@@ -247,6 +247,7 @@ export class DevinCliExecutor extends BaseExecutor {
         let roleEmitted = false;
         let totalText = "";
         let finished = false;
+        let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
 
         const sendRpc = (method: string, params: unknown) => {
           if (stdinClosed || child.stdin.destroyed) return;
@@ -262,6 +263,11 @@ export class DevinCliExecutor extends BaseExecutor {
         const finish = (error?: string) => {
           if (finished) return;
           finished = true;
+
+          if (keepaliveTimer) {
+            clearInterval(keepaliveTimer);
+            keepaliveTimer = null;
+          }
 
           if (error) {
             emit(
@@ -363,6 +369,41 @@ export class DevinCliExecutor extends BaseExecutor {
                 sessionId,
                 prompt: [{ type: "text", text: promptText }],
               });
+
+              // Emit a role-only delta immediately so ensureStreamReadiness
+              // sees a non-ping SSE event and doesn't kill the stream as a
+              // zombie. Devin CLI can take minutes to produce the first real
+              // content token while the model is thinking.
+              if (!roleEmitted) {
+                roleEmitted = true;
+                emit(
+                  `data: ${JSON.stringify({
+                    id: responseId,
+                    object: "chat.completion.chunk",
+                    created,
+                    model,
+                    choices: [
+                      {
+                        index: 0,
+                        delta: { role: "assistant", content: "" },
+                        finish_reason: null,
+                      },
+                    ],
+                  })}\n\n`
+                );
+              }
+
+              // Periodic SSE comment keepalive prevents STREAM_IDLE_TIMEOUT_MS
+              // from closing the stream during long model thinking phases.
+              // SSE comments (lines starting with ":") are ignored by all
+              // compliant clients but reset the idle timer.
+              keepaliveTimer = setInterval(() => {
+                if (!finished) {
+                  emit(": keepalive\n\n");
+                }
+              }, 15_000);
+              keepaliveTimer.unref?.();
+
               continue;
             }
 
@@ -444,24 +485,9 @@ export class DevinCliExecutor extends BaseExecutor {
             if (promptSent && msg.result !== undefined && !msg.method && !finished) {
               const res = msg.result as Record<string, unknown> | undefined;
               // Extract text from result if we haven't streamed anything yet
-              if (!roleEmitted && res) {
+              if (!totalText && res) {
                 const content = extractResultText(res);
                 if (content) {
-                  emit(
-                    `data: ${JSON.stringify({
-                      id: responseId,
-                      object: "chat.completion.chunk",
-                      created,
-                      model,
-                      choices: [
-                        {
-                          index: 0,
-                          delta: { role: "assistant", content: "" },
-                          finish_reason: null,
-                        },
-                      ],
-                    })}\n\n`
-                  );
                   totalText = content;
                   emit(
                     `data: ${JSON.stringify({
