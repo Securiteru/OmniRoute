@@ -274,6 +274,10 @@ export class DevinCliExecutor extends BaseExecutor {
               `data: ${JSON.stringify({ error: { message: error, type: "devin_cli_error" } })}\n\n`
             );
           } else {
+            // Strip <summary>...</summary> wrapper that the devin summarizer
+            // agent wraps around every response, so the client sees the raw
+            // answer instead of a meta-summary.
+            const cleanText = stripSummaryWrapper(totalText);
             // Emit finish chunk
             emit(
               `data: ${JSON.stringify({
@@ -284,8 +288,8 @@ export class DevinCliExecutor extends BaseExecutor {
                 choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
                 usage: {
                   prompt_tokens: Math.ceil(promptText.length / 4),
-                  completion_tokens: Math.ceil(totalText.length / 4),
-                  total_tokens: Math.ceil((promptText.length + totalText.length) / 4),
+                  completion_tokens: Math.ceil(cleanText.length / 4),
+                  total_tokens: Math.ceil((promptText.length + cleanText.length) / 4),
                   estimated: true,
                 },
               })}\n\n`
@@ -461,15 +465,25 @@ export class DevinCliExecutor extends BaseExecutor {
                     roleEmitted = true;
                   }
                   totalText += delta;
-                  emit(
-                    `data: ${JSON.stringify({
-                      id: responseId,
-                      object: "chat.completion.chunk",
-                      created,
-                      model,
-                      choices: [{ index: 0, delta: { content: delta }, finish_reason: null }],
-                    })}\n\n`
-                  );
+                  // Strip <summary>/</summary> wrapper tags from streaming
+                  // deltas so the client sees the raw answer instead of
+                  // the devin summarizer's meta-tag appearing in the UI.
+                  const cleanDelta = delta
+                    .replace(/<\/?summary>/g, "")
+                    .replace(/<\/?antml:[^>]+>/g, "");
+                  if (cleanDelta) {
+                    emit(
+                      `data: ${JSON.stringify({
+                        id: responseId,
+                        object: "chat.completion.chunk",
+                        created,
+                        model,
+                        choices: [
+                          { index: 0, delta: { content: cleanDelta }, finish_reason: null },
+                        ],
+                      })}\n\n`
+                    );
+                  }
                 }
               } else if (type === "message_stop" || type === "stop" || type === "done") {
                 finish();
@@ -489,15 +503,23 @@ export class DevinCliExecutor extends BaseExecutor {
                 const content = extractResultText(res);
                 if (content) {
                   totalText = content;
-                  emit(
-                    `data: ${JSON.stringify({
-                      id: responseId,
-                      object: "chat.completion.chunk",
-                      created,
-                      model,
-                      choices: [{ index: 0, delta: { content }, finish_reason: null }],
-                    })}\n\n`
-                  );
+                  const cleanContent = content
+                    .replace(/<\/?summary>/g, "")
+                    .replace(/<\/?antml:[^>]+>/g, "")
+                    .trim();
+                  if (cleanContent) {
+                    emit(
+                      `data: ${JSON.stringify({
+                        id: responseId,
+                        object: "chat.completion.chunk",
+                        created,
+                        model,
+                        choices: [
+                          { index: 0, delta: { content: cleanContent }, finish_reason: null },
+                        ],
+                      })}\n\n`
+                    );
+                  }
                 }
               }
               const stopReason = (res?.stopReason as string) || "";
@@ -564,6 +586,24 @@ export class DevinCliExecutor extends BaseExecutor {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Strip `<summary>...</summary>` wrapper that the devin summarizer agent
+ * wraps around every response. If the wrapper is present, return only the
+ * content inside it; otherwise return the input unchanged. Also strips a
+ * bare leading `<summary>` tag with no closing tag (streaming output).
+ */
+function stripSummaryWrapper(text: string): string {
+  if (!text) return text;
+  // Full wrapper: <summary>...</summary>
+  const m = text.match(/^[\s\S]*?<summary>([\s\S]*?)<\/summary>[\s\S]*$/);
+  if (m) return m[1].trim();
+  // Bare opening tag with no close (streaming): strip just the tag
+  if (text.trimStart().startsWith("<summary>")) {
+    return text.replace(/<summary>/g, "").trim();
+  }
+  return text;
+}
 
 /** Try to extract text from a final ACP session/prompt result object. */
 function extractResultText(result: Record<string, unknown>): string {
