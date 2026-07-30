@@ -145,6 +145,32 @@ export class DevinCliExecutor extends BaseExecutor {
       credentials.apiKey || credentials.accessToken || process.env.WINDSURF_API_KEY || "";
     const devinBin = resolveDevinBin();
 
+    // ACP protocol does not support client-defined tools. If the request
+    // includes tool/function definitions, reject so the combo router falls
+    // back to a provider that supports tool calls natively (e.g. direct GLM API).
+    const hasTools = Array.isArray(b.tools) && b.tools.length > 0;
+    if (hasTools) {
+      const errorResponse = new Response(
+        JSON.stringify({
+          error: {
+            message: "devin-cli does not support client-defined tools; falling back",
+            type: "unsupported_tools",
+            code: "TOOLS_NOT_SUPPORTED",
+          },
+        }),
+        {
+          status: 501,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+      return {
+        response: errorResponse,
+        url: "devin://acp/stdio",
+        headers: {},
+        transformedBody: body,
+      };
+    }
+
     log?.info?.("DEVIN", `devin acp → model=${model}, bin=${devinBin}`);
 
     const sseStream = new ReadableStream<Uint8Array>({
