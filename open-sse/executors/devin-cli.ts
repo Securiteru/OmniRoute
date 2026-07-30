@@ -246,6 +246,7 @@ export class DevinCliExecutor extends BaseExecutor {
         let created = Math.floor(Date.now() / 1000);
         let roleEmitted = false;
         let totalText = "";
+        let tagBuffer = ""; // buffers partial <summary>/</summary> tags across chunks
         let finished = false;
         let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -278,6 +279,19 @@ export class DevinCliExecutor extends BaseExecutor {
             // agent wraps around every response, so the client sees the raw
             // answer instead of a meta-summary.
             const cleanText = stripSummaryWrapper(totalText);
+            // Flush any remaining buffered partial tag.
+            if (tagBuffer) {
+              emit(
+                `data: ${JSON.stringify({
+                  id: responseId,
+                  object: "chat.completion.chunk",
+                  created,
+                  model,
+                  choices: [{ index: 0, delta: { content: tagBuffer }, finish_reason: null }],
+                })}\n\n`
+              );
+              tagBuffer = "";
+            }
             // Emit finish chunk
             emit(
               `data: ${JSON.stringify({
@@ -468,21 +482,39 @@ export class DevinCliExecutor extends BaseExecutor {
                   // Strip <summary>/</summary> wrapper tags from streaming
                   // deltas so the client sees the raw answer instead of
                   // the devin summarizer's meta-tag appearing in the UI.
-                  const cleanDelta = delta
-                    .replace(/<\/?summary>/g, "")
-                    .replace(/<\/?antml:[^>]+>/g, "");
-                  if (cleanDelta) {
-                    emit(
-                      `data: ${JSON.stringify({
-                        id: responseId,
-                        object: "chat.completion.chunk",
-                        created,
-                        model,
-                        choices: [
-                          { index: 0, delta: { content: cleanDelta }, finish_reason: null },
-                        ],
-                      })}\n\n`
-                    );
+                  // Tags may arrive split across chunks (e.g. "<summary" + ">"),
+                  // so we keep a small rolling buffer to reassemble partial tags.
+                  tagBuffer = (tagBuffer + delta).slice(-32);
+                  const emitIdx = findSafeStripPoint(tagBuffer);
+                  if (emitIdx > 0) {
+                    const safe = tagBuffer.slice(0, emitIdx);
+                    tagBuffer = tagBuffer.slice(emitIdx);
+                    if (safe) {
+                      emit(
+                        `data: ${JSON.stringify({
+                          id: responseId,
+                          object: "chat.completion.chunk",
+                          created,
+                          model,
+                          choices: [{ index: 0, delta: { content: safe }, finish_reason: null }],
+                        })}\n\n`
+                      );
+                    }
+                  } else if (emitIdx === 0 && !couldFormTag(tagBuffer)) {
+                    // nothing safe to emit and buffer can't form a tag → flush it
+                    const safe = tagBuffer;
+                    tagBuffer = "";
+                    if (safe) {
+                      emit(
+                        `data: ${JSON.stringify({
+                          id: responseId,
+                          object: "chat.completion.chunk",
+                          created,
+                          model,
+                          choices: [{ index: 0, delta: { content: safe }, finish_reason: null }],
+                        })}\n\n`
+                      );
+                    }
                   }
                 }
               } else if (type === "message_stop" || type === "stop" || type === "done") {
@@ -583,6 +615,63 @@ export class DevinCliExecutor extends BaseExecutor {
       transformedBody: { model, promptLength: (body as Record<string, unknown>)?.messages },
     };
   }
+}
+
+/**
+ * Strip <summary>/</summary> wrapper tags from a chunked stream. Tags may
+ * arrive split across chunks (e.g. "<summary" + ">" or "<" + "summary>"),
+ * so we maintain a rolling buffer and only emit content that is provably
+ * not part of a tag.
+ */
+function findSafeStripPoint(buf: string): number {
+  // returns the largest prefix length that:
+  //   - does NOT match any tag-stripping pattern when followed by an empty
+  //     continuation, OR
+  //   - is guaranteed clean regardless of what comes next.
+  // For simplicity: strip known tags only when we have the complete tag.
+  // Strategy: scan for < ... > and only strip if the inner is "summary",
+  // "/summary", or matches "antml:...".
+  let i = 0;
+  while (i < buf.length) {
+    const lt = buf.indexOf("<", i);
+    if (lt === -1) {
+      // No more tags possible in the buffer — all of buf is safe.
+      return buf.length;
+    }
+    // Everything before < is safe to emit.
+    if (lt > i) {
+      // We have content before <, but the buffer still might form a tag.
+      // Conservative: emit up to lt only if the prefix doesn't form a tag.
+      // (lt > i means we already advanced past it on a previous pass.)
+    }
+    const gt = buf.indexOf(">", lt);
+    if (gt === -1) {
+      // Tag not yet closed — emit only what's clearly safe (before <),
+      // and keep the rest in the buffer.
+      return lt;
+    }
+    const inner = buf.slice(lt + 1, gt);
+    if (
+      inner === "summary" ||
+      inner === "/summary" ||
+      /^antml:/.test(inner) ||
+      /^\/antml:/.test(inner)
+    ) {
+      // Known tag — skip it entirely and continue scanning.
+      i = gt + 1;
+      continue;
+    }
+    // Unknown tag — don't strip, just stop here and emit up to lt.
+    return lt;
+  }
+  return buf.length;
+}
+
+function couldFormTag(buf: string): boolean {
+  // Check if the buffer could still become the start of <summary>, </summary>,
+  // <antml:...>, or </antml:...>.
+  const m = buf.match(/<(\/?summary|\/?antml:?[a-z]*)?$/i);
+  return !!m;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
