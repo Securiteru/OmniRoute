@@ -196,6 +196,8 @@ export {
   bulkAssignProxyToScope,
 } from "./db/proxies";
 
+export * from "./db/dynamicProxyPools";
+
 export {
   // Pricing Sync
   getSyncedPricing,

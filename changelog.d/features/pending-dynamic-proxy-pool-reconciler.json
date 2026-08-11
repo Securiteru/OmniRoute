@@ -1,0 +1,23 @@
+{
+  "version": "3.8.49",
+  "title": "Dynamic proxy pool reconciler control plane",
+  "description": "Background reconciler that syncs free-proxy sources, probes egress IPs, deduplicates by canonical identity, refills pools toward desiredReadyCount, expires stale members, and clears expired cooldowns. Feature-gated by OMNIROUTE_DYNAMIC_PROXY_POOLS_ENABLED.",
+  "audience": "developer",
+  "visibility": "internal",
+  "release_scope": "dev",
+  "public_description": "",
+  "internal_description": "Adds the dynamic proxy pool reconciler (src/lib/dynamicProxyPool/reconciler.ts), migration 126 with sources/scan_concurrency/last_reconciled_at columns, lifecycle DB functions (update/delete/unbind/removeMember), extended management API (update/unbind/removeMember/reconcile/delete), scheduler wiring in instrumentation-node.ts, architecture diagram, and 9 new TDD reconciler tests (17/17 focused tests pass).",
+  "files_changed": [
+    "src/lib/db/migrations/126_dynamic_proxy_pool_reconciler.sql",
+    "src/lib/dynamicProxyPool/reconciler.ts",
+    "src/lib/db/dynamicProxyPools.ts",
+    "src/app/api/settings/proxies/dynamic/route.ts",
+    "src/instrumentation-node.ts",
+    "tests/unit/dynamic-proxy-reconciler.test.ts",
+    "docs/diagrams/dynamic-proxy-pool-reconciler.mmd",
+    "docs/diagrams/exported/dynamic-proxy-pool-reconciler.svg",
+    "docs/diagrams/exported/dynamic-proxy-pool-reconciler.png",
+    "docs/diagrams/README.md"
+  ],
+  "timestamp": "2026-08-11T00:20:00Z"
+}

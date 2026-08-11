@@ -1,0 +1,43 @@
+%% Dynamic proxy pool reconciler — background control plane
+%% Reflects: src/lib/dynamicProxyPool/reconciler.ts,
+%%           src/lib/db/dynamicProxyPools.ts,
+%%           src/lib/db/migrations/125_dynamic_proxy_pools.sql,
+%%           src/lib/db/migrations/126_dynamic_proxy_pool_reconciler.sql
+%% v3.8.49
+flowchart TB
+  subgraph Init["Startup"]
+    Start["instrumentation-node.ts"] --> Gate{"Feature flag<br/>DYNAMIC_PROXY_POOLS_ENABLED?"}
+    Gate -->|disabled| Noop["No-op"]
+    Gate -->|enabled| Sched["initDynamicProxyPoolReconciler<br/>(90s initial delay, 5min interval)"]
+  end
+
+  Sched --> Sweep["reconcileAllDynamicProxyPools"]
+
+  subgraph Pool["Per-pool reconciliation"]
+    Lock{"In-memory<br/>lock held?"}
+    Lock -->|yes| Skip["Return skipped=true"]
+    Lock -->|no| Sync["1. List candidates<br/>from free-proxy sources"]
+    Sync --> Probe["2. Probe each candidate<br/>egress IP (benign CONNECT)"]
+    Probe --> Dedup["3. Deduplicate<br/>by canonical egress IP"]
+    Dedup --> Refill["4. Refill toward<br/>desiredReadyCount unique IPs"]
+    Refill --> Stale["5. Remove stale members<br/>(not probed in 24h)"]
+    Stale --> Cool["6. Clear expired<br/>cooldowns"]
+    Cool --> Ts["7. Update lastReconciledAt"]
+  end
+
+  Sweep --> Lock
+
+  subgraph Request["Request path (separate)"]
+    Req["Provider request"] --> Resolve["resolveDynamicProxyForConnection"]
+    Resolve --> Lease["Sticky lease from<br/>pool binding"]
+    Lease --> Exec["Route via forced proxy"]
+    Exec -->|success| RecSuccess["recordDynamicProxySuccess<br/>retain lease"]
+    Exec -->|"transport/TLS error"| RecFail["recordDynamicProxyFailure<br/>quarantine + advance lease"]
+    RecFail --> Retry["Retry next ready candidate"]
+    Exec -->|"401/429/402"| NoRetry["No failover<br/>return provider error"]
+  end
+
+  Refill -.->|populates| PoolMembers["dynamic_proxy_pool_members"]
+  Cool -.->|clears| TargetHealth["dynamic_proxy_target_health"]
+  Lease -.->|reads| PoolMembers
+  RecFail -.->|writes| TargetHealth

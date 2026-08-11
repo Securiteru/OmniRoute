@@ -29,6 +29,7 @@ import {
 } from "@omniroute/open-sse/utils/proxyFetch.ts";
 import { resolveProxyForConnection } from "@/lib/localDb";
 import { hasBlockingProxyAssignment } from "@/lib/db/proxies";
+import { recordDynamicProxyFailure, recordDynamicProxySuccess } from "@/lib/db/dynamicProxyPools";
 import {
   CircuitBreakerOpenError,
   getCircuitBreaker,
@@ -449,6 +450,14 @@ export async function executeChatWithBreaker({
             },
             onRequestSuccess: async () => {
               if (isShadowTraffic) return;
+              if (proxyInfo?.level === "dynamic" && proxyInfo.proxy) {
+                void recordDynamicProxySuccess(
+                  credentials.connectionId,
+                  provider,
+                  String((proxyInfo as any).dynamicProxyId || ""),
+                  undefined
+                ).catch(() => {});
+              }
               await clearAccountError(credentials.connectionId, credentials);
             },
             onStreamFailure: async (failure: any) => {
@@ -542,7 +551,15 @@ export async function executeChatWithBreaker({
       };
     }
 
-    if (cbErr?.code === "PROXY_UNREACHABLE" || /proxy unreachable/i.test(cbErr?.message || "")) {
+    if (
+      cbErr?.code === "PROXY_UNREACHABLE" ||
+      cbErr?.code === "PROXY_FAMILY_UNAVAILABLE" ||
+      cbErr?.code === "ETIMEDOUT" ||
+      cbErr?.code === "ECONNRESET" ||
+      cbErr?.code === "ECONNREFUSED" ||
+      cbErr?.code === "ENOTFOUND" ||
+      /proxy unreachable|proxy connection|proxy tls/i.test(cbErr?.message || "")
+    ) {
       const detail = cbErr?.message || "Proxy unreachable";
       log.warn("PROXY", detail);
       return {
@@ -551,6 +568,8 @@ export async function executeChatWithBreaker({
           response: unavailableResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, detail, 2),
           status: HTTP_STATUS.SERVICE_UNAVAILABLE,
           error: detail,
+          errorCode: cbErr?.code || "PROXY_UNREACHABLE",
+          errorType: /tls/i.test(detail) ? "proxy_tls_error" : "proxy_transport_error",
         },
         tlsFingerprintUsed: false,
       };
@@ -558,6 +577,65 @@ export async function executeChatWithBreaker({
 
     throw cbErr;
   }
+}
+
+export function isDynamicProxyFailClosedResult(result: any): boolean {
+  return Boolean(
+    result &&
+    !result.success &&
+    (result.errorCode === "PROXY_UNREACHABLE" ||
+      result.errorCode === "PROXY_FAMILY_UNAVAILABLE" ||
+      result.errorCode === "UND_ERR_PRX_CONN" ||
+      result.errorCode === "UND_ERR_SOCKET" ||
+      result.errorCode === "ETIMEDOUT" ||
+      result.errorCode === "ECONNRESET" ||
+      result.errorCode === "ECONNREFUSED" ||
+      result.errorCode === "ENOTFOUND" ||
+      result.errorType === "proxy_transport_error" ||
+      result.errorType === "proxy_tls_error")
+  );
+}
+
+export function isDynamicProxyRetryableResult(result: any): boolean {
+  const status = Number(result?.status);
+  if (status === 401 || status === 402 || status === 429 || result?.errorType === "AbortError") {
+    return false;
+  }
+  return Boolean(
+    result &&
+    !result.success &&
+    (result.errorCode === "PROXY_UNREACHABLE" ||
+      result.errorCode === "PROXY_FAMILY_UNAVAILABLE" ||
+      result.errorCode === "UND_ERR_PRX_CONN" ||
+      result.errorCode === "UND_ERR_SOCKET" ||
+      result.errorCode === "STREAM_READINESS_TIMEOUT" ||
+      result.errorCode === "STREAM_EARLY_EOF" ||
+      result.errorCode === "ETIMEDOUT" ||
+      result.errorCode === "ECONNRESET" ||
+      result.errorCode === "ECONNREFUSED" ||
+      result.errorCode === "ENOTFOUND" ||
+      result.errorType === "stream_timeout" ||
+      result.errorType === "stream_early_eof" ||
+      result.errorType === "upstream_timeout" ||
+      result.errorType === "proxy_transport_error" ||
+      result.errorType === "proxy_tls_error")
+  );
+}
+
+export async function quarantineDynamicProxyAfterFailure(
+  proxyInfo: { proxy?: unknown; level?: string; dynamicProxyId?: string } | null | undefined,
+  connectionId: string,
+  provider: string,
+  result: any
+) {
+  if (proxyInfo?.level !== "dynamic" || !proxyInfo.dynamicProxyId) return null;
+  if (!isDynamicProxyRetryableResult(result)) return null;
+  return recordDynamicProxyFailure(
+    connectionId,
+    provider,
+    proxyInfo.dynamicProxyId,
+    String(result.error || result.errorCode || result.errorType || "dynamic_proxy_failure")
+  );
 }
 
 export function handleNoCredentials(
@@ -587,12 +665,9 @@ export function handleNoCredentials(
       return modelCooldownResponse({
         model: cooldownModel,
         retryAfter: credentials.retryAfter,
-        retryAfterAt:
-          typeof credentials.retryAfter === "string" ? credentials.retryAfter : null,
+        retryAfterAt: typeof credentials.retryAfter === "string" ? credentials.retryAfter : null,
         credentialsCoolingCount:
-          typeof credentials.connectionsCount === "number"
-            ? credentials.connectionsCount
-            : null,
+          typeof credentials.connectionsCount === "number" ? credentials.connectionsCount : null,
       });
     }
 
@@ -708,7 +783,11 @@ export async function safeResolveProxy(connectionId: string, apiKeyId?: string) 
     // is dead/inactive must fail closed — egressing on the real IP leaks it. Reuse
     // the existing proxy-resolution-failure policy (blocks by default; PROXY_FAIL_OPEN
     // opts back into direct). Explicit "proxy off" is not a leak (see the guard).
-    if (!(resolved as { proxy?: unknown } | null)?.proxy && hasBlockingProxyAssignment(connectionId)) {
+    if (
+      !(resolved as { proxy?: unknown } | null)?.proxy &&
+      (resolved as { dynamicFailClosed?: boolean } | null)?.dynamicFailClosed !== true &&
+      hasBlockingProxyAssignment(connectionId)
+    ) {
       return decideProxyResolutionFailure(
         Object.assign(
           new Error(

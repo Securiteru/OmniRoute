@@ -19,6 +19,7 @@ import EditCompatibleNodeModal from "./modals/EditCompatibleNodeModal";
 import ExternalLinkModal from "./ExternalLinkModal";
 import BatchTestResultsModal from "./BatchTestResultsModal";
 import ImportProgressModal from "./ImportProgressModal";
+import DynamicProxyPoolModal from "./DynamicProxyPoolModal";
 import { AdaptaTutorialModal } from "./AdaptaTutorialModal";
 import { ImportCodexAuthModal, ApplyCodexAuthModal } from "./modals/ImportCodexAuthModal";
 import { ImportClaudeAuthModal, ApplyClaudeAuthModal } from "./modals/ImportClaudeAuthModal";
@@ -128,6 +129,8 @@ interface ProviderModalsPanelProps {
   // Proxy config
   proxyTarget: ProxyTarget | null;
   setProxyTarget: (t: ProxyTarget | null) => void;
+  dynamicProxyTarget: { id: string; label: string } | null;
+  setDynamicProxyTarget: (t: { id: string; label: string } | null) => void;
   fetchProxyConfig: () => Promise<void>;
   // Import progress
   importProgress: ImportProgress;
@@ -209,6 +212,8 @@ export default function ProviderModalsPanel({
   emailsVisible,
   proxyTarget,
   setProxyTarget,
+  dynamicProxyTarget,
+  setDynamicProxyTarget,
   fetchProxyConfig,
   importProgress,
   showImportModal,
@@ -402,6 +407,14 @@ export default function ProviderModalsPanel({
           onSaved={() => {
             void fetchProxyConfig();
           }}
+        />
+      )}
+      {dynamicProxyTarget && (
+        <DynamicProxyPoolModal
+          connectionId={dynamicProxyTarget.id}
+          connectionLabel={dynamicProxyTarget.label}
+          providerId={providerId}
+          onClose={() => setDynamicProxyTarget(null)}
         />
       )}
       <ImportProgressModal

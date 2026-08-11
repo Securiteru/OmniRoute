@@ -53,6 +53,15 @@ export function createStreamingErrorResult(
 
 export function getUpstreamErrorIdentifier(error: unknown): string | undefined {
   if (!error || typeof error !== "object") return undefined;
-  const value = (error as { code?: unknown }).code;
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+  const direct = (error as { code?: unknown }).code;
+  if (typeof direct === "string" && direct.length > 0) return direct;
+
+  // Node/undici wraps proxy transport failures as `fetch failed` with the
+  // actionable dispatcher code on `error.cause` (for example
+  // `UND_ERR_PRX_CONN`). Preserve that code so dynamic proxy failover can
+  // quarantine the current member instead of treating it as a provider error.
+  const cause = (error as { cause?: unknown }).cause;
+  if (!cause || typeof cause !== "object") return undefined;
+  const causeCode = (cause as { code?: unknown }).code;
+  return typeof causeCode === "string" && causeCode.length > 0 ? causeCode : undefined;
 }

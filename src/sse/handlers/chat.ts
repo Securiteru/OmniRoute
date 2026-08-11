@@ -78,6 +78,8 @@ import {
   safeLogEvents,
   applyExecutorProxyToInfo,
   shouldRetryStreamEarlyEof,
+  quarantineDynamicProxyAfterFailure,
+  isDynamicProxyFailClosedResult,
   withSessionHeader,
   withSelectedConnectionHeader,
   withCorrelationId,
@@ -1212,6 +1214,7 @@ async function handleSingleModelChat(
   // re-attempt to exactly one for the whole request. Declared outside both retry
   // loops so it can never reset and loop.
   let streamEarlyEofRetries = 0;
+  let dynamicProxyRetries = 0;
 
   requestAttemptLoop: while (true) {
     const excludedConnectionIds = new Set<string>();
@@ -1372,6 +1375,15 @@ async function handleSingleModelChat(
         );
       }
       const proxyInfo = await safeResolveProxy(credentials.connectionId, apiKeyInfo?.id);
+      if (
+        proxyInfo?.level === "dynamic" &&
+        proxyInfo.dynamicFailClosed === true &&
+        !proxyInfo.proxy
+      ) {
+        const exhaustedMessage = `[${provider}/${model}] dynamic proxy pool has no usable members`;
+        log.warn("PROXY", exhaustedMessage);
+        return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, exhaustedMessage);
+      }
       // #5217: sink for the proxy the executor pins internally (e.g. OpencodeExecutor
       // rotation) so the egress log below reflects the real egress, not "direct".
       const appliedProxySink: { proxy: unknown } = { proxy: null };
@@ -1442,6 +1454,37 @@ async function handleSingleModelChat(
         if (telemetry) telemetry.startPhase("finalize");
         if (telemetry) telemetry.endPhase();
         return result.response;
+      }
+
+      if (proxyInfo?.level === "dynamic" && dynamicProxyRetries < 5) {
+        const dynamicProxy = proxyInfo as {
+          proxy?: unknown;
+          level?: string;
+          dynamicProxyId?: string;
+          dynamicFailClosed?: boolean;
+        };
+        const nextDynamicProxy = await quarantineDynamicProxyAfterFailure(
+          dynamicProxy,
+          credentials.connectionId,
+          provider,
+          result
+        );
+        if (nextDynamicProxy) {
+          dynamicProxyRetries += 1;
+          log.warn(
+            "PROXY",
+            `${provider}/${model} dynamic proxy failed before usable output; promoting candidate ${dynamicProxyRetries}/5`
+          );
+          continue;
+        }
+        if (dynamicProxy.dynamicFailClosed && isDynamicProxyFailClosedResult(result)) {
+          const exhaustedMessage = `[${provider}/${model}] dynamic proxy pool exhausted after transport failure`;
+          log.warn("PROXY", exhaustedMessage);
+          return withSelectedConnectionHeader(
+            errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, exhaustedMessage),
+            credentials?.connectionId
+          );
+        }
       }
 
       const isAntigravityStreamReadinessFailure =
