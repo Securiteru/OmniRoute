@@ -215,6 +215,17 @@ export async function registerNodejs(): Promise<void> {
   // Proxy health scheduler (auto-removes dead proxies on interval)
   await import("@/lib/proxyHealth/scheduler");
 
+  // Dynamic proxy pool reconciler (background source sync, egress probe,
+  // dedup, refill, stale/cooldown cleanup). Feature-gated by
+  // OMNIROUTE_DYNAMIC_PROXY_POOLS_ENABLED — no-op when off.
+  try {
+    const { initDynamicProxyPoolReconciler } = await import("@/lib/dynamicProxyPool/reconciler");
+    initDynamicProxyPoolReconciler();
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn("[STARTUP] Dynamic proxy pool reconciler failed to start (non-fatal):", msg);
+  }
+
   initGracefulShutdown();
   initApiBridgeServer();
   startSpendBatchWriter();

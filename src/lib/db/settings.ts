@@ -19,6 +19,8 @@ type ProxyResolutionResult = {
   level: string;
   levelId: string | null;
   source?: string;
+  dynamicProxyId?: string;
+  dynamicFailClosed?: boolean;
 };
 type ProxyResolutionCacheEntry = {
   generation: number;
@@ -460,6 +462,44 @@ export async function resolveProxyForConnection(connectionId: string, apiKeyId?:
   }
 
   const config = await getProxyConfig();
+
+  // Dynamic pools are opt-in and deliberately take precedence over static
+  // assignments once a connection is attached to one. The connection-level
+  // proxy-off guard above remains authoritative.
+  let dynamicPoolsEnabled = isTruthyEnvFlag(process.env.OMNIROUTE_DYNAMIC_PROXY_POOLS_ENABLED);
+  try {
+    const { isFeatureFlagEnabled } = await import("@/shared/utils/featureFlags");
+    dynamicPoolsEnabled = isFeatureFlagEnabled("OMNIROUTE_DYNAMIC_PROXY_POOLS_ENABLED");
+  } catch {
+    // Keep the environment fallback if the feature-flag store is unavailable.
+  }
+  if (dynamicPoolsEnabled) {
+    const { resolveDynamicProxyForConnection } = await import("./dynamicProxyPools");
+    if (connectionProvider) {
+      const dynamic = await resolveDynamicProxyForConnection(connectionId, connectionProvider);
+      if (dynamic?.selection) {
+        const result = {
+          proxy: dynamic.selection.proxy,
+          level: "dynamic",
+          levelId: dynamic.poolId,
+          source: "dynamic_pool",
+          dynamicProxyId: dynamic.selection.proxyId,
+          dynamicFailClosed: dynamic.pool.failClosed,
+        };
+        return result;
+      }
+      if (dynamic?.pool.failClosed) {
+        const result = {
+          proxy: null,
+          level: "dynamic",
+          levelId: dynamic.poolId,
+          source: "dynamic_pool",
+          dynamicFailClosed: true,
+        };
+        return result;
+      }
+    }
+  }
 
   // Step 2: API key-level proxy (only if per-key proxy is enabled globally or per-connection)
   if (apiKeyId) {

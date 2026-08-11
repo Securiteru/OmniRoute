@@ -16,6 +16,7 @@ import {
   type CodexGlobalServiceMode,
 } from "@/lib/providers/codexFastTier";
 import { normalizeCodexLimitPolicy, providerText, ERROR_TYPE_LABELS } from "../providerPageHelpers";
+import { getCodexPlanLabel } from "../codexPlanLabel";
 
 // ---------------------------------------------------------------------------
 // Types (exported so the client can reference them without re-importing)
@@ -74,6 +75,7 @@ export interface ConnectionRowProps {
   hasProxy?: boolean;
   proxySource?: string;
   proxyHost?: string;
+  onDynamicProxy?: () => void;
   proxyEnabled?: boolean;
   perKeyProxyEnabled?: boolean;
   onToggleProxyEnabled?: (enabled: boolean) => void;
@@ -355,6 +357,7 @@ export default function ConnectionRow({
   hasProxy,
   proxySource,
   proxyHost,
+  onDynamicProxy,
   onRefreshToken,
   isRefreshing,
   onApplyCodexAuthLocal,
@@ -499,6 +502,7 @@ export default function ConnectionRow({
   const claudeBlockExtraUsageEnabled = isClaude
     ? isClaudeExtraUsageBlockEnabled("claude", connection.providerSpecificData)
     : false;
+  const codexPlanLabel = getCodexPlanLabel(!!isCodex, connection.providerSpecificData);
   const cliproxyapiDeepMode = !!cliproxyapiEnabled;
 
   return (
@@ -540,6 +544,11 @@ export default function ConnectionRow({
             <Badge variant={statusPresentation.statusVariant as any} size="sm" dot>
               {statusPresentation.statusLabel}
             </Badge>
+            {codexPlanLabel && (
+              <Badge variant="primary" size="sm" className="capitalize">
+                {codexPlanLabel}
+              </Badge>
+            )}
             {/* T12: Token expiry status indicator (state-driven, no Date.now in render) */}
             {/* #5836: the red "Token Expired" badge is TERMINAL-only — for OAuth
                refresh-capable providers (Antigravity/Gemini) the access token lapses
@@ -882,6 +891,16 @@ export default function ConnectionRow({
           >
             <span className="material-symbols-outlined text-[18px]">vpn_lock</span>
           </button>
+          {onDynamicProxy && (
+            <button
+              onClick={onDynamicProxy}
+              className="p-2 hover:bg-emerald-500/10 rounded text-text-muted hover:text-emerald-600"
+              title={t("dynamicProxyPool", "Dynamic proxy pool")}
+              aria-label={t("dynamicProxyPool", "Dynamic proxy pool")}
+            >
+              <span className="material-symbols-outlined text-[18px]">hub</span>
+            </button>
+          )}
           <button
             onClick={onDelete}
             className="p-2 hover:bg-red-500/10 rounded text-red-500"

@@ -59,6 +59,7 @@ type ConnectionsListPanelProps = {
   onOpenEditModal: (conn: ConnectionRowConnection) => void;
   onOpenOAuth: (conn: ConnectionRowConnection) => void;
   onSetProxyTarget: (target: { level: string; id: string; label: string }) => void;
+  onSetDynamicProxyTarget?: (target: { id: string; label: string }) => void;
   onOpenApplyCodexModal: (connId: string) => void;
   onExportCodexAuthFile: (connId: string) => void;
   onOpenApplyClaudeModal: (connId: string) => void;
@@ -115,6 +116,7 @@ export default function ConnectionsListPanel({
   onOpenEditModal,
   onOpenOAuth,
   onSetProxyTarget,
+  onSetDynamicProxyTarget,
   onOpenApplyCodexModal,
   onExportCodexAuthFile,
   onOpenApplyClaudeModal,
@@ -378,6 +380,15 @@ export default function ConnectionsListPanel({
                     label: pickDisplayValue([conn.name, conn.email], emailsVisible, conn.id),
                   })
                 }
+                onDynamicProxy={
+                  onSetDynamicProxyTarget
+                    ? () =>
+                        onSetDynamicProxyTarget({
+                          id: conn.id,
+                          label: pickDisplayValue([conn.name, conn.email], emailsVisible, conn.id),
+                        })
+                    : undefined
+                }
                 hasProxy={!!connProxyMap[conn.id]?.proxy}
                 proxySource={connProxyMap[conn.id]?.level || null}
                 proxyHost={connProxyMap[conn.id]?.proxy?.host || null}
@@ -546,6 +557,19 @@ export default function ConnectionsListPanel({
                         id: conn.id,
                         label: pickDisplayValue([conn.name, conn.email], emailsVisible, conn.id),
                       })
+                    }
+                    onDynamicProxy={
+                      onSetDynamicProxyTarget
+                        ? () =>
+                            onSetDynamicProxyTarget({
+                              id: conn.id,
+                              label: pickDisplayValue(
+                                [conn.name, conn.email],
+                                emailsVisible,
+                                conn.id
+                              ),
+                            })
+                        : undefined
                     }
                     hasProxy={!!connProxyMap[conn.id]?.proxy}
                     proxySource={connProxyMap[conn.id]?.level || null}

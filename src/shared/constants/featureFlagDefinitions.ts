@@ -153,6 +153,18 @@ export const FEATURE_FLAG_DEFINITIONS: FeatureFlagDefinition[] = [
     warningLevel: "danger",
   },
   {
+    key: "OMNIROUTE_DYNAMIC_PROXY_POOLS_ENABLED",
+    label: "Dynamic Shared Proxy Pools",
+    description:
+      "Enable account-aware dynamic proxy pools with sticky leases and retryable transport failover.",
+    descriptionI18nKey: "featureFlagOmnirouteDynamicProxyPoolsEnabledDescription",
+    category: "network",
+    defaultValue: "false",
+    type: "boolean",
+    requiresRestart: false,
+    warningLevel: "danger",
+  },
+  {
     key: "MITM_DISABLE_TLS_VERIFY",
     label: "Disable TLS Verify (MITM)",
     description: "Disable TLS certificate verification for MITM proxy",

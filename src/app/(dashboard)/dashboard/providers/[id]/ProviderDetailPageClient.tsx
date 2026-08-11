@@ -71,6 +71,10 @@ export default function ProviderDetailPageClient() {
   const [showTutorialModal, setShowTutorialModal] = useState(false);
   const [selectedConnection, setSelectedConnection] = useState(null);
   const [proxyTarget, setProxyTarget] = useState(null);
+  const [dynamicProxyTarget, setDynamicProxyTarget] = useState<{
+    id: string;
+    label: string;
+  } | null>(null);
   const [importCodexModalOpen, setImportCodexModalOpen] = useState(false);
   const [codexCliGuideOpen, setCodexCliGuideOpen] = useState(false);
   const [importClaudeModalOpen, setImportClaudeModalOpen] = useState(false);
@@ -484,7 +488,10 @@ export default function ProviderDetailPageClient() {
       )}
       {!isUpstreamProxyProvider && !isFreeNoAuth && (
         <Card>
-          <ProviderAccountRoutingCard providerKey={providerId} connectionCount={connections.length} />
+          <ProviderAccountRoutingCard
+            providerKey={providerId}
+            connectionCount={connections.length}
+          />
           <ConnectionsHeaderToolbar
             providerId={providerId}
             providerInfo={providerInfo}
@@ -512,6 +519,7 @@ export default function ProviderDetailPageClient() {
             handleChangeCodexGlobalServiceMode={handleChangeCodexGlobalServiceMode}
             loadCodexSettings={loadCodexSettings}
             onSetProxyTarget={setProxyTarget}
+            onSetDynamicProxyTarget={setDynamicProxyTarget}
             handleDistributeProxies={handleDistributeProxies}
             handleBatchTestAll={handleBatchTestAll}
             gateConnectionFlow={gateConnectionFlow}
@@ -602,6 +610,7 @@ export default function ProviderDetailPageClient() {
                 }}
                 onOpenOAuth={(conn) => gateConnectionFlow(() => setShowOAuthModal(true, conn))}
                 onSetProxyTarget={setProxyTarget}
+                onSetDynamicProxyTarget={setDynamicProxyTarget}
                 onOpenApplyCodexModal={setApplyCodexModalConnectionId}
                 onExportCodexAuthFile={handleExportCodexAuthFile}
                 onOpenApplyClaudeModal={setApplyClaudeModalConnectionId}
@@ -767,6 +776,8 @@ export default function ProviderDetailPageClient() {
         emailsVisible={emailsVisible}
         proxyTarget={proxyTarget}
         setProxyTarget={setProxyTarget}
+        dynamicProxyTarget={dynamicProxyTarget}
+        setDynamicProxyTarget={setDynamicProxyTarget}
         fetchProxyConfig={fetchProxyConfig}
         importProgress={importProgress}
         showImportModal={showImportModal}
