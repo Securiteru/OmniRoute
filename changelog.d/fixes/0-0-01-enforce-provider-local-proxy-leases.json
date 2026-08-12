@@ -1,0 +1,22 @@
+{
+  "version": "0.0.01",
+  "title": "Enforce provider-local proxy leases",
+  "description": "Enforce provider-scoped active egress leases, preserve account IP history across failover, and fail closed when same-provider proxy capacity is exhausted.",
+  "audience": "user-facing",
+  "visibility": "public",
+  "release_scope": "prod",
+  "public_description": "Keep accounts on distinct provider-local proxy egress addresses and fail safely when proxy capacity is unavailable.",
+  "internal_description": "Enforce provider-scoped active egress leases, preserve account IP history across failover, and fail closed when same-provider proxy capacity is exhausted.",
+  "files_changed": [
+    "src/lib/db/dynamicProxyPools.ts",
+    "tests/unit/dynamic-proxy-pools.test.ts",
+    "src/lib/db/migrations/127_dynamic_proxy_exclusive_leases.sql"
+  ],
+  "timestamp": "2026-08-12T13:23:55.567554Z",
+  "git": {
+    "branch": "main",
+    "base_commit": "5e60b47c55ad8903b4267c2fdcf913ea14efcfb1",
+    "deployment_commit": null,
+    "deployment_commit_note": "Final commit SHA is only known after commit creation; correlate by reading this changelog entry from the deployed GitHub Actions headSha."
+  }
+}

@@ -76,6 +76,13 @@ export interface DynamicProxyResolution {
   selection: DynamicProxySelection | null;
 }
 
+export interface DynamicProxySelectionOptions {
+  /** Override the production backoff schedule in focused tests. */
+  retryDelaysMs?: number[];
+}
+
+const DEFAULT_EXCLUSIVE_LEASE_RETRY_DELAYS_MS = [10_000, 20_000, 30_000];
+
 type PoolRow = Record<string, unknown>;
 
 function asBoolean(value: unknown): boolean {
@@ -152,8 +159,12 @@ function normalizeScopeId(scope: DynamicProxyScope, scopeId?: string | null): st
   return scopeId.trim();
 }
 
+function normalizeProvider(provider: string): string {
+  return provider.trim().toLowerCase();
+}
+
 function targetKey(provider: string): string {
-  return `provider:${provider.trim().toLowerCase()}`;
+  return `provider:${normalizeProvider(provider)}`;
 }
 
 function getPoolById(id: string): DynamicProxyPool | null {
@@ -278,9 +289,9 @@ export async function bindDynamicProxyPool(
   const normalizedScope = normalizeScope(scope);
   const normalizedScopeId = normalizeScopeId(normalizedScope, scopeId);
   const now = new Date().toISOString();
-  getDbInstance()
-    .prepare(
-      `INSERT INTO dynamic_proxy_pool_bindings
+  const db = getDbInstance();
+  db.prepare(
+    `INSERT INTO dynamic_proxy_pool_bindings
        (id, pool_id, scope, scope_id, enabled, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(scope, scope_id) DO UPDATE SET
@@ -290,8 +301,14 @@ export async function bindDynamicProxyPool(
          current_egress_ip = NULL,
          lease_generation = lease_generation + 1,
          updated_at = excluded.updated_at`
-    )
-    .run(randomUUID(), poolId, normalizedScope, normalizedScopeId, enabled ? 1 : 0, now);
+  ).run(randomUUID(), poolId, normalizedScope, normalizedScopeId, enabled ? 1 : 0, now);
+  // A rebinding invalidates the active lease, but deliberately retains the
+  // account/provider history so a later failover cannot reuse a prior egress.
+  db.prepare(
+    `UPDATE dynamic_proxy_pool_leases
+     SET current_proxy_id = NULL, current_egress_ip = NULL, updated_at = ?
+     WHERE binding_id = (SELECT id FROM dynamic_proxy_pool_bindings WHERE scope = ? AND scope_id = ?)`
+  ).run(now, normalizedScope, normalizedScopeId);
   backupDbFile("pre-write");
   const binding = getBinding(normalizedScope, normalizedScopeId);
   return {
@@ -390,8 +407,10 @@ export async function listDynamicProxyTargetHealth(
 function selectCandidate(
   poolId: string,
   provider: string,
+  leaseKey: string,
   currentProxyId?: string | null
 ): PoolRow | undefined {
+  const normalizedProvider = normalizeProvider(provider);
   const target = targetKey(provider);
   const now = new Date().toISOString();
   const rows = getDbInstance()
@@ -402,10 +421,22 @@ function selectCandidate(
        JOIN proxy_registry p ON p.id = m.proxy_id AND p.status = 'active'
        LEFT JOIN dynamic_proxy_target_health h
          ON h.pool_id = m.pool_id AND h.proxy_id = m.proxy_id AND h.target = ?
-        WHERE m.pool_id = ?
+       WHERE m.pool_id = ?
+         AND m.egress_ip IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM dynamic_proxy_pool_leases l
+           WHERE lower(l.provider) = ?
+             AND l.current_egress_ip = m.egress_ip
+             AND l.lease_key <> ?
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM dynamic_proxy_pool_lease_history hst
+           WHERE hst.lease_key = ? AND lower(hst.provider) = ?
+             AND hst.egress_ip = m.egress_ip
+         )
        ORDER BY m.position ASC, m.id ASC`
     )
-    .all(target, poolId) as PoolRow[];
+    .all(target, poolId, normalizedProvider, leaseKey, leaseKey, normalizedProvider) as PoolRow[];
   return rows.find((row) => {
     if (currentProxyId && row.proxy_id === currentProxyId) return false;
     if (row.health_state !== "cooldown") return true;
@@ -413,30 +444,37 @@ function selectCandidate(
   });
 }
 
-export async function selectDynamicProxyForConnection(
+function selectDynamicProxyForConnectionOnce(
   connectionId: string,
   provider: string
-): Promise<DynamicProxySelection | null> {
+): DynamicProxySelection | null {
   const binding = findEffectiveBinding(connectionId, provider);
   if (!binding) return null;
   const db = getDbInstance();
   const target = targetKey(provider);
+  const normalizedProvider = normalizeProvider(provider);
   const selectLease = db.transaction(() => {
     const bindingRow = db
       .prepare(
-        `SELECT b.id AS binding_id, b.pool_id, b.current_proxy_id AS proxy_id,
-                b.lease_generation, b.current_egress_ip,
+        `SELECT b.id AS binding_id, b.pool_id,
+                l.current_proxy_id AS proxy_id,
+                COALESCE(l.lease_generation, b.lease_generation) AS lease_generation,
+                COALESCE(l.current_egress_ip, b.current_egress_ip) AS current_egress_ip,
                 m.egress_ip, p.type, p.host, p.port, p.username, p.password, p.family,
-                h.state AS health_state, h.cooldown_until
+                h.state AS health_state, h.cooldown_until,
+                l.provider AS lease_provider
          FROM dynamic_proxy_pool_bindings b
+         LEFT JOIN dynamic_proxy_pool_leases l
+           ON l.lease_key = ? AND lower(l.provider) = ? AND l.binding_id = b.id
+          AND l.pool_id = b.pool_id
          LEFT JOIN dynamic_proxy_pool_members m
-           ON m.pool_id = b.pool_id AND m.proxy_id = b.current_proxy_id
+           ON m.pool_id = l.pool_id AND m.proxy_id = l.current_proxy_id
          LEFT JOIN proxy_registry p ON p.id = m.proxy_id AND p.status = 'active'
          LEFT JOIN dynamic_proxy_target_health h
-           ON h.pool_id = b.pool_id AND h.proxy_id = b.current_proxy_id AND h.target = ?
+           ON h.pool_id = b.pool_id AND h.proxy_id = l.current_proxy_id AND h.target = ?
          WHERE b.id = ? AND b.enabled = 1`
       )
-      .get(target, binding.bindingId) as PoolRow | undefined;
+      .get(connectionId, normalizedProvider, target, binding.bindingId) as PoolRow | undefined;
     const now = new Date().toISOString();
     const currentHealthy =
       bindingRow?.proxy_id &&
@@ -448,6 +486,7 @@ export async function selectDynamicProxyForConnection(
     const candidate = selectCandidate(
       binding.poolId,
       provider,
+      connectionId,
       typeof bindingRow?.proxy_id === "string" ? bindingRow.proxy_id : null
     );
     if (!candidate) return null;
@@ -455,28 +494,94 @@ export async function selectDynamicProxyForConnection(
     const nextGeneration = previousGeneration + 1;
     const updated = db
       .prepare(
-        `UPDATE dynamic_proxy_pool_bindings
-         SET current_proxy_id = ?, current_egress_ip = ?, lease_generation = ?,
-             last_selected_at = ?, updated_at = ?
-         WHERE id = ? AND enabled = 1 AND lease_generation = ?`
+        `INSERT INTO dynamic_proxy_pool_leases
+           (lease_key, binding_id, pool_id, provider, current_proxy_id, current_egress_ip,
+            lease_generation, last_selected_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(lease_key, provider) DO UPDATE SET
+           current_proxy_id = excluded.current_proxy_id,
+           current_egress_ip = excluded.current_egress_ip,
+           lease_generation = excluded.lease_generation,
+           last_selected_at = excluded.last_selected_at,
+           updated_at = excluded.updated_at`
       )
       .run(
+        connectionId,
+        binding.bindingId,
+        binding.poolId,
+        normalizedProvider,
         candidate.proxy_id,
         candidate.egress_ip || null,
         nextGeneration,
         now,
-        now,
-        binding.bindingId,
-        previousGeneration
+        now
       );
     if (updated.changes !== 1) return null;
+    db.prepare(
+      `UPDATE dynamic_proxy_pool_bindings
+       SET current_proxy_id = ?, current_egress_ip = ?, lease_generation = ?,
+           last_selected_at = ?, updated_at = ?
+       WHERE id = ? AND enabled = 1`
+    ).run(
+      candidate.proxy_id,
+      candidate.egress_ip || null,
+      nextGeneration,
+      now,
+      now,
+      binding.bindingId
+    );
+    db.prepare(
+      `INSERT OR IGNORE INTO dynamic_proxy_pool_lease_history
+       (id, lease_key, binding_id, pool_id, provider, proxy_id, egress_ip, reason, selected_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'selected', ?)`
+    ).run(
+      randomUUID(),
+      connectionId,
+      binding.bindingId,
+      binding.poolId,
+      normalizedProvider,
+      candidate.proxy_id,
+      candidate.egress_ip,
+      now
+    );
     return proxySelectionFromRow({
       ...candidate,
       binding_id: binding.bindingId,
       lease_generation: nextGeneration,
     });
   });
-  return selectLease();
+  try {
+    return selectLease();
+  } catch (error) {
+    // Another process may have reserved the same provider/IP between the
+    // candidate query and the insert. Let bounded retries choose a free IP.
+    if (
+      error instanceof Error &&
+      /idx_dynamic_proxy_leases_unique_provider_egress|UNIQUE constraint failed/i.test(
+        error.message
+      )
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function selectDynamicProxyForConnection(
+  connectionId: string,
+  provider: string,
+  options: DynamicProxySelectionOptions = {}
+): Promise<DynamicProxySelection | null> {
+  const first = selectDynamicProxyForConnectionOnce(connectionId, provider);
+  if (first || options.retryDelaysMs?.length === 0) return first;
+
+  const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_EXCLUSIVE_LEASE_RETRY_DELAYS_MS;
+  for (const delayMs of retryDelaysMs) {
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const selection = selectDynamicProxyForConnectionOnce(connectionId, provider);
+    if (selection) return selection;
+  }
+  return null;
 }
 
 export async function recordDynamicProxySuccess(
@@ -489,6 +594,7 @@ export async function recordDynamicProxySuccess(
   if (!binding) return;
   const db = getDbInstance();
   const now = new Date().toISOString();
+  const normalizedProvider = normalizeProvider(provider);
   const target = targetKey(provider);
   db.prepare(
     `INSERT INTO dynamic_proxy_target_health
@@ -504,6 +610,9 @@ export async function recordDynamicProxySuccess(
   db.prepare(
     "UPDATE dynamic_proxy_pool_bindings SET last_success_at = ?, updated_at = ? WHERE id = ? AND current_proxy_id = ?"
   ).run(now, now, binding.bindingId, proxyId);
+  db.prepare(
+    "UPDATE dynamic_proxy_pool_leases SET last_success_at = ?, updated_at = ? WHERE lease_key = ? AND lower(provider) = ? AND current_proxy_id = ?"
+  ).run(now, now, connectionId, normalizedProvider, proxyId);
 }
 
 export async function recordDynamicProxyFailure(
@@ -511,17 +620,19 @@ export async function recordDynamicProxyFailure(
   provider: string,
   proxyId: string,
   reason: string,
-  cooldownSeconds?: number
+  cooldownSeconds?: number,
+  options: DynamicProxySelectionOptions = {}
 ): Promise<DynamicProxySelection | null> {
   const binding = findEffectiveBinding(connectionId, provider);
   if (!binding) return null;
   const db = getDbInstance();
   const pool = getPoolById(binding.poolId);
   if (!pool) return null;
+  const normalizedProvider = normalizeProvider(provider);
   const now = new Date();
   const nowIso = now.toISOString();
   const cooldownUntil = new Date(
-    now.getTime() + 1000 * (cooldownSeconds ?? pool.cooldownSeconds)
+    now.getTime() + 1000 * Math.max(1, cooldownSeconds ?? pool.cooldownSeconds)
   ).toISOString();
   const target = targetKey(provider);
   db.prepare(
@@ -541,7 +652,20 @@ export async function recordDynamicProxyFailure(
      SET current_proxy_id = NULL, current_egress_ip = NULL, last_failure_at = ?, last_failure_reason = ?, updated_at = ?
       WHERE id = ? AND current_proxy_id = ?`
   ).run(nowIso, reason.slice(0, 500), nowIso, binding.bindingId, proxyId);
-  return selectDynamicProxyForConnection(connectionId, provider);
+  db.prepare(
+    `UPDATE dynamic_proxy_pool_leases
+     SET current_proxy_id = NULL, current_egress_ip = NULL, last_failure_at = ?,
+         last_failure_reason = ?, updated_at = ?
+     WHERE lease_key = ? AND lower(provider) = ? AND current_proxy_id = ?`
+  ).run(nowIso, reason.slice(0, 500), nowIso, connectionId, normalizedProvider, proxyId);
+  db.prepare(
+    `UPDATE dynamic_proxy_pool_lease_history
+     SET reason = ?
+     WHERE lease_key = ? AND lower(provider) = ? AND proxy_id = ? AND egress_ip IN (
+       SELECT egress_ip FROM dynamic_proxy_pool_members WHERE pool_id = ? AND proxy_id = ?
+     )`
+  ).run(reason.slice(0, 500), connectionId, normalizedProvider, proxyId, binding.poolId, proxyId);
+  return selectDynamicProxyForConnection(connectionId, provider, options);
 }
 
 export async function updateDynamicProxyPool(
@@ -629,6 +753,13 @@ export async function removeDynamicProxyPoolMember(
   const result = db
     .prepare("DELETE FROM dynamic_proxy_pool_members WHERE pool_id = ? AND proxy_id = ?")
     .run(poolId, proxyId);
+  if (result.changes > 0) {
+    db.prepare(
+      `UPDATE dynamic_proxy_pool_leases
+       SET current_proxy_id = NULL, current_egress_ip = NULL, updated_at = ?
+       WHERE pool_id = ? AND current_proxy_id = ?`
+    ).run(new Date().toISOString(), poolId, proxyId);
+  }
   if (result.changes > 0) backupDbFile("pre-write");
   return result.changes > 0;
 }
