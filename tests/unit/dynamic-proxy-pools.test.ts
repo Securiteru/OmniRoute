@@ -115,36 +115,75 @@ test("keeps leases isolated when two accounts share one pool", async () => {
   await dynamicPools.bindDynamicProxyPool(pool.id, "account", "connection-a");
   await dynamicPools.bindDynamicProxyPool(pool.id, "account", "connection-b");
 
-  const firstLease = await dynamicPools.selectDynamicProxyForConnection("connection-a", "openai");
-  const secondLease = await dynamicPools.selectDynamicProxyForConnection("connection-b", "openai");
+  const [firstLease, secondLease] = await Promise.all([
+    dynamicPools.selectDynamicProxyForConnection("connection-a", "openai"),
+    dynamicPools.selectDynamicProxyForConnection("connection-b", "openai"),
+  ]);
   assert.equal(firstLease?.proxyId, firstProxy);
-  assert.equal(secondLease?.proxyId, firstProxy);
+  assert.equal(secondLease?.proxyId, secondProxy);
+  assert.notEqual(firstLease?.egressIp, secondLease?.egressIp);
 
   const promoted = await dynamicPools.recordDynamicProxyFailure(
     "connection-a",
     "openai",
     firstProxy,
     "connect_failed",
-    60
+    60,
+    { retryDelaysMs: [] }
   );
-  assert.equal(promoted?.proxyId, secondProxy);
+  assert.equal(promoted, null, "must not share connection-b's active egress IP");
 
   const bindings = await dynamicPools.listDynamicProxyPoolBindings(pool.id);
   const accountA = bindings.find((binding) => binding.scope_id === "connection-a");
   const accountB = bindings.find((binding) => binding.scope_id === "connection-b");
-  assert.equal(accountA?.current_proxy_id, secondProxy);
-  assert.equal(accountB?.current_proxy_id, firstProxy);
+  assert.equal(accountA?.current_proxy_id, null);
+  assert.equal(accountB?.current_proxy_id, secondProxy);
 
   const firstAfterFailure = await dynamicPools.selectDynamicProxyForConnection(
     "connection-a",
-    "openai"
+    "openai",
+    { retryDelaysMs: [] }
   );
   const secondAfterFirstFailure = await dynamicPools.selectDynamicProxyForConnection(
     "connection-b",
-    "openai"
+    "openai",
+    { retryDelaysMs: [] }
   );
-  assert.equal(firstAfterFailure?.proxyId, secondProxy);
+  assert.equal(firstAfterFailure, null);
   assert.equal(secondAfterFirstFailure?.proxyId, secondProxy);
+});
+
+test("does not reuse an egress IP after an account fails over", async () => {
+  await resetStorage();
+  const firstProxy = await makeProxy(1);
+  const secondProxy = await makeProxy(2);
+  const pool = await dynamicPools.createDynamicProxyPool({ name: "no-history-reuse" });
+  await dynamicPools.addDynamicProxyPoolMember(pool.id, firstProxy, "203.0.113.60");
+  await dynamicPools.addDynamicProxyPoolMember(pool.id, secondProxy, "203.0.113.61");
+  await dynamicPools.bindDynamicProxyPool(pool.id, "account", "connection-history");
+
+  const first = await dynamicPools.selectDynamicProxyForConnection("connection-history", "ollama");
+  assert.equal(first?.egressIp, "203.0.113.60");
+
+  const second = await dynamicPools.recordDynamicProxyFailure(
+    "connection-history",
+    "ollama",
+    firstProxy,
+    "connect_failed",
+    0,
+    { retryDelaysMs: [] }
+  );
+  assert.equal(second?.egressIp, "203.0.113.61");
+
+  const exhausted = await dynamicPools.recordDynamicProxyFailure(
+    "connection-history",
+    "ollama",
+    secondProxy,
+    "connect_failed",
+    0,
+    { retryDelaysMs: [] }
+  );
+  assert.equal(exhausted, null, "the first egress IP must not be reused");
 });
 
 test("does not let one account failure clear another account lease", async () => {
@@ -159,22 +198,23 @@ test("does not let one account failure clear another account lease", async () =>
 
   await dynamicPools.selectDynamicProxyForConnection("connection-c", "ollama");
   await dynamicPools.selectDynamicProxyForConnection("connection-d", "ollama");
-  await dynamicPools.recordDynamicProxySuccess("connection-d", "ollama", firstProxy, 100);
+  await dynamicPools.recordDynamicProxySuccess("connection-d", "ollama", secondProxy, 100);
   await dynamicPools.recordDynamicProxyFailure(
     "connection-c",
     "ollama",
     firstProxy,
     "tls_error",
-    60
+    60,
+    { retryDelaysMs: [] }
   );
 
   const bindings = await dynamicPools.listDynamicProxyPoolBindings(pool.id);
   assert.equal(
     bindings.find((binding) => binding.scope_id === "connection-c")?.current_proxy_id,
-    secondProxy
+    null
   );
   assert.equal(
     bindings.find((binding) => binding.scope_id === "connection-d")?.current_proxy_id,
-    firstProxy
+    secondProxy
   );
 });
