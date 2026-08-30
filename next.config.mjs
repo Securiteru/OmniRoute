@@ -93,6 +93,13 @@ function readTimeoutMs(...values) {
   return 600_000;
 }
 
+function readPositiveInteger(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+const buildCpus = readPositiveInteger(process.env.OMNIROUTE_BUILD_CPUS);
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Opt-in subpath deployment behind a reverse proxy (e.g. nginx/Caddy serving
@@ -162,6 +169,7 @@ const nextConfig = {
   // accept for image-bearing requests; tune via env if a deployment needs
   // more.
   experimental: {
+    ...(buildCpus ? { cpus: buildCpus } : {}),
     serverActions: {
       bodySizeLimit: process.env.OMNIROUTE_SERVER_ACTIONS_BODY_LIMIT || "50mb",
     },

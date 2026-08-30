@@ -103,6 +103,13 @@ ENV OMNIROUTE_MITM_STUB=1
 ARG OMNIROUTE_BUILD_MEMORY_MB=4096
 ENV NODE_OPTIONS="--max-old-space-size=${OMNIROUTE_BUILD_MEMORY_MB}"
 
+# Page-data collection loads the native better-sqlite3 addon in every Next.js
+# worker. Node 24.20 can abort while many of those workers tear down at once, so
+# Docker builds use one worker by default. This changes build speed only; runtime
+# concurrency is unaffected. Override when the toolchain is known-good.
+ARG OMNIROUTE_BUILD_CPUS=1
+ENV OMNIROUTE_BUILD_CPUS=${OMNIROUTE_BUILD_CPUS}
+
 COPY . ./
 RUN --mount=type=cache,id=next-cache,target=/app/.build/next/cache \
   mkdir -p /app/data && npm run build
