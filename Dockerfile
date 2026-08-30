@@ -1,7 +1,10 @@
 ARG OMNIROUTE_BASE_PATH=""
 
 # ── Common base with runtime deps ──────────────────────────────────────────
-FROM node:24-trixie-slim AS base
+# Pin the patch release: Node 24.20.0 aborts in better-sqlite3 cleanup hooks
+# during both Next page-data teardown and the standalone runtime. 24.18.0 is
+# the version already proven by the current agent-helper production image.
+FROM node:24.18.0-trixie-slim AS base
 WORKDIR /app
 
 # `apt-get upgrade` pulls the security-patched versions of the Debian (trixie)
