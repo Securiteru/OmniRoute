@@ -12,6 +12,7 @@ const { probeHealth } = (await import("../../scripts/dev/healthcheck.mjs")) as {
     hosts?: string[];
     fetchImpl?: typeof fetch;
     timeoutMs?: number;
+    basePath?: string;
   }) => Promise<string>;
 };
 
@@ -49,6 +50,34 @@ test.after(async () => {
   for (const s of servers) {
     await closeServer(s);
   }
+});
+
+test("probeHealth includes the configured native base path", async () => {
+  const server = http.createServer((req, res) => {
+    if (req.url === "/omniroute/api/monitoring/health") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  const port = await new Promise<number>((resolve, reject) => {
+    server.on("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address && typeof address === "object") resolve(address.port);
+      else reject(new Error("no address"));
+    });
+  });
+  servers.push(server);
+
+  const ok = await probeHealth({
+    port,
+    hosts: ["127.0.0.1"],
+    basePath: "/omniroute/",
+  });
+  assert.equal(ok, "127.0.0.1");
 });
 
 test("probeHealth resolves the host when the server is on 127.0.0.1", async () => {

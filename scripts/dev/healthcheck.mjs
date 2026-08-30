@@ -45,10 +45,14 @@ function getContainerInternalIP() {
  * Build the health URL for a host, bracketing IPv6 literals (e.g. `::1`).
  * @param {string} host
  * @param {string|number} port
+ * @param {string} [basePath]
  */
-function healthUrl(host, port) {
+function healthUrl(host, port, basePath = "") {
   const hostPart = host.includes(":") ? `[${host}]` : host;
-  return `http://${hostPart}:${port}/api/monitoring/health`;
+  const normalizedBasePath = basePath && basePath !== "/"
+    ? `/${basePath.replace(/^\/+|\/+$/g, "")}`
+    : "";
+  return `http://${hostPart}:${port}${normalizedBasePath}/api/monitoring/health`;
 }
 
 /**
@@ -62,6 +66,7 @@ function healthUrl(host, port) {
  * @param {string[]} [opts.hosts]
  * @param {typeof fetch} [opts.fetchImpl]
  * @param {number} [opts.timeoutMs]
+ * @param {string} [opts.basePath]
  * @returns {Promise<string>} the host that succeeded
  */
 export async function probeHealth({
@@ -69,11 +74,12 @@ export async function probeHealth({
   hosts = DEFAULT_HOSTS,
   fetchImpl = fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  basePath = "",
 } = {}) {
   let lastError = new Error("no hosts to probe");
   for (const host of hosts) {
     try {
-      const res = await fetchImpl(healthUrl(host, port), {
+      const res = await fetchImpl(healthUrl(host, port, basePath), {
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (res.ok) return host;
@@ -87,6 +93,7 @@ export async function probeHealth({
 
 async function main() {
   const port = process.env.DASHBOARD_PORT || process.env.PORT || "20128";
+  const basePath = process.env.OMNIROUTE_BASE_PATH || "";
 
   // Build host list: defaults + detected container bridge IP
   const hosts = [...DEFAULT_HOSTS];
@@ -96,7 +103,7 @@ async function main() {
   }
 
   try {
-    await probeHealth({ port, hosts });
+    await probeHealth({ port, hosts, basePath });
     process.exit(0);
   } catch (err) {
     // Surface the failure so `docker inspect ... .State.Health[].Output` is
