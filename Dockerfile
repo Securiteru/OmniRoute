@@ -1,3 +1,5 @@
+ARG OMNIROUTE_BASE_PATH=""
+
 # ── Common base with runtime deps ──────────────────────────────────────────
 FROM node:24-trixie-slim AS base
 WORKDIR /app
@@ -26,6 +28,9 @@ RUN npm install -g npm@latest \
 
 # ── Builder ────────────────────────────────────────────────────────────────
 FROM base AS builder
+
+ARG OMNIROUTE_BASE_PATH
+ENV OMNIROUTE_BASE_PATH=${OMNIROUTE_BASE_PATH}
 
 # Build tools for native module compilation
 # apt-get update needed here because base's rm -rf clears the shared cache
@@ -104,6 +109,9 @@ RUN --mount=type=cache,id=next-cache,target=/app/.build/next/cache \
 
 # ── Runner base ────────────────────────────────────────────────────────────
 FROM base AS runner-base
+
+ARG OMNIROUTE_BASE_PATH
+ENV OMNIROUTE_BASE_PATH=${OMNIROUTE_BASE_PATH}
 
 LABEL org.opencontainers.image.title="omniroute" \
   org.opencontainers.image.description="Unified AI proxy — route any LLM through one endpoint" \
