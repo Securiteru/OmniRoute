@@ -265,6 +265,24 @@ function hasOpenAICompatibleStreamValue(parsed: Record<string, unknown>): boolea
   });
 }
 
+/**
+ * Return true only for visible OpenAI stream output. Reasoning-only deltas are
+ * intentionally excluded: a tool-call turn can emit reasoning before the
+ * tool-call delta, and combo quality validation must keep peeking until that
+ * turn either terminates or is proven truncated.
+ */
+export function hasOpenAIVisibleStreamValue(parsed: Record<string, unknown>): boolean {
+  if (!Array.isArray(parsed.choices)) return false;
+
+  return parsed.choices.some((choice) => {
+    if (!isRecord(choice)) return false;
+    const delta = isRecord(choice.delta) ? choice.delta : null;
+    if (!delta) return false;
+    if (typeof delta.content === "string" && delta.content.length > 0) return true;
+    return Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0;
+  });
+}
+
 function hasResponsesStreamValue(parsed: Record<string, unknown>, eventType = ""): boolean {
   const type = typeof parsed.type === "string" ? parsed.type : eventType;
   if (!type.startsWith("response.")) return false;
@@ -314,6 +332,30 @@ function hasGeminiCandidateStreamValue(parsed: Record<string, unknown>): boolean
       if (typeof part.text === "string" && part.text.length > 0) return true;
       return isRecord(part.functionCall) || isRecord(part.executableCode);
     });
+  });
+}
+
+// Combo quality checks need to distinguish an OpenAI-shaped payload from a
+// payload that actually completed. `hasOpenAICompatibleStreamValue()` is
+// intentionally content-oriented, so keep these lifecycle predicates separate.
+export function isOpenAIChoicesPayload(parsed: Record<string, unknown>): boolean {
+  return Array.isArray(parsed.choices);
+}
+
+export function hasOpenAIFinishReason(parsed: Record<string, unknown>): boolean {
+  if (!Array.isArray(parsed.choices)) return false;
+  return parsed.choices.some(
+    (choice) =>
+      isRecord(choice) && choice.finish_reason !== null && choice.finish_reason !== undefined
+  );
+}
+
+export function hasOpenAIToolCallPayload(parsed: Record<string, unknown>): boolean {
+  if (!Array.isArray(parsed.choices)) return false;
+  return parsed.choices.some((choice) => {
+    if (!isRecord(choice) || !isRecord(choice.delta)) return false;
+    const toolCalls = choice.delta.tool_calls;
+    return Array.isArray(toolCalls) && toolCalls.length > 0;
   });
 }
 

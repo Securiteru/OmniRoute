@@ -10,17 +10,18 @@ Mermaid sources (`.mmd`) and exported SVGs for OmniRoute v3.8.0 architecture flo
 
 ## Canonical diagrams
 
-| Source                                               | Exported                                  | Used in                                                                        |
-| ---------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------ |
-| [request-pipeline.mmd](./request-pipeline.mmd)       | [SVG](./exported/request-pipeline.svg)    | docs/architecture/ARCHITECTURE.md, docs/architecture/CODEBASE_DOCUMENTATION.md |
-| [auto-combo-12factor.mmd](./auto-combo-12factor.mmd) | [SVG](./exported/auto-combo-12factor.svg) | docs/routing/AUTO-COMBO.md                                                     |
-| [resilience-3layers.mmd](./resilience-3layers.mmd)   | [SVG](./exported/resilience-3layers.svg)  | docs/architecture/RESILIENCE_GUIDE.md, CLAUDE.md                               |
-| [i18n-flow.mmd](./i18n-flow.mmd)                     | [SVG](./exported/i18n-flow.svg)           | docs/guides/I18N.md                                                            |
-| [mcp-tools-94.mmd](./mcp-tools-94.mmd)               | [SVG](./exported/mcp-tools-94.svg)        | docs/frameworks/MCP-SERVER.md                                                  |
-| [cloud-agent-flow.mmd](./cloud-agent-flow.mmd)       | [SVG](./exported/cloud-agent-flow.svg)    | docs/frameworks/CLOUD_AGENT.md                                                 |
-| [authz-pipeline.mmd](./authz-pipeline.mmd)           | [SVG](./exported/authz-pipeline.svg)      | docs/architecture/AUTHZ_GUIDE.md                                               |
-| [db-schema-overview.mmd](./db-schema-overview.mmd)   | [SVG](./exported/db-schema-overview.svg)  | docs/architecture/CODEBASE_DOCUMENTATION.md                                    |
-| [dynamic-proxy-pool-reconciler.mmd](./dynamic-proxy-pool-reconciler.mmd) | [SVG](./exported/dynamic-proxy-pool-reconciler.svg) | internal |
+| Source                                                                   | Exported                                                                                     | Used in                                                                        |
+| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| [request-pipeline.mmd](./request-pipeline.mmd)                           | [SVG](./exported/request-pipeline.svg)                                                       | docs/architecture/ARCHITECTURE.md, docs/architecture/CODEBASE_DOCUMENTATION.md |
+| [auto-combo-12factor.mmd](./auto-combo-12factor.mmd)                     | [SVG](./exported/auto-combo-12factor.svg)                                                    | docs/routing/AUTO-COMBO.md                                                     |
+| [resilience-3layers.mmd](./resilience-3layers.mmd)                       | [SVG](./exported/resilience-3layers.svg)                                                     | docs/architecture/RESILIENCE_GUIDE.md, CLAUDE.md                               |
+| [i18n-flow.mmd](./i18n-flow.mmd)                                         | [SVG](./exported/i18n-flow.svg)                                                              | docs/guides/I18N.md                                                            |
+| [mcp-tools-94.mmd](./mcp-tools-94.mmd)                                   | [SVG](./exported/mcp-tools-94.svg)                                                           | docs/frameworks/MCP-SERVER.md                                                  |
+| [cloud-agent-flow.mmd](./cloud-agent-flow.mmd)                           | [SVG](./exported/cloud-agent-flow.svg)                                                       | docs/frameworks/CLOUD_AGENT.md                                                 |
+| [authz-pipeline.mmd](./authz-pipeline.mmd)                               | [SVG](./exported/authz-pipeline.svg)                                                         | docs/architecture/AUTHZ_GUIDE.md                                               |
+| [db-schema-overview.mmd](./db-schema-overview.mmd)                       | [SVG](./exported/db-schema-overview.svg)                                                     | docs/architecture/CODEBASE_DOCUMENTATION.md                                    |
+| [dynamic-proxy-pool-reconciler.mmd](./dynamic-proxy-pool-reconciler.mmd) | [SVG](./exported/dynamic-proxy-pool-reconciler.svg)                                          | internal                                                                       |
+| [combo-stream-failover.mmd](./combo-stream-failover.mmd)                 | [SVG](./exported/combo-stream-failover-1.svg), [PNG](./exported/combo-stream-failover-1.png) | `open-sse/services/combo/validateQuality.ts`                                   |
 
 ## How to update
 
@@ -60,4 +61,10 @@ From the repo root (e.g. `CLAUDE.md`):
 - Prefer `flowchart LR` for pipelines and `flowchart TB` for layered models.
 - Use `sequenceDiagram` for interactive (request/response) flows.
 - Use `erDiagram` for database schema overviews.
-- Update both `.mmd` and `.svg` in the same commit. Keep them in lock-step.
+- Update each source and its exported SVG/PNG artifacts in the same commit. Keep them in lock-step.
+
+## Session-close artifact
+
+![Combo streaming failover](./exported/combo-stream-failover-1.svg)
+
+> Source: [combo-stream-failover.mmd](./combo-stream-failover.mmd) · [PNG](./exported/combo-stream-failover-1.png)

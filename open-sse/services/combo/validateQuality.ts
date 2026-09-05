@@ -8,7 +8,11 @@
 
 import {
   createSSEDataLineNormalizer,
+  hasOpenAIFinishReason,
+  hasOpenAIToolCallPayload,
+  hasOpenAIVisibleStreamValue,
   isKnownNonClaudeStreamPayload,
+  isOpenAIChoicesPayload,
 } from "../../utils/streamHelpers.ts";
 import { evaluateResponseValidation, type ResponseValidationConfig } from "./responseValidation.ts";
 import { getReasoningTokens } from "../../../src/lib/usage/tokenAccounting.ts";
@@ -96,6 +100,27 @@ function contentBlockDeltaIsRealSignal(parsed: Record<string, unknown>): boolean
 /** A message_delta closes the lifecycle once it carries a stop_reason. */
 function messageDeltaEndsLifecycle(parsed: Record<string, unknown>): boolean {
   return asObject(parsed, "delta")?.stop_reason != null;
+}
+
+/**
+ * OpenAI-shaped streams need their own terminal tracking. Claude lifecycle
+ * events do not exist on this path, and tool-call chunks are otherwise
+ * mistaken for a complete response as soon as the first delta arrives.
+ */
+interface OpenAiLifecycleFlags {
+  hasChoicePayload: boolean;
+  hasTerminalMarker: boolean;
+  hasToolCallPayload: boolean;
+}
+
+function applyOpenAiLifecycleEvent(
+  parsed: Record<string, unknown>,
+  flags: OpenAiLifecycleFlags
+): void {
+  if (!isOpenAIChoicesPayload(parsed)) return;
+  flags.hasChoicePayload = true;
+  if (hasOpenAIFinishReason(parsed)) flags.hasTerminalMarker = true;
+  if (hasOpenAIToolCallPayload(parsed)) flags.hasToolCallPayload = true;
 }
 
 /**
@@ -228,6 +253,11 @@ export async function validateResponseQuality(
     };
     let anyContentFound = false;
     let sawAnyBytes = false;
+    const openAi: OpenAiLifecycleFlags = {
+      hasChoicePayload: false,
+      hasTerminalMarker: false,
+      hasToolCallPayload: false,
+    };
     const sseLineNormalizer = createSSEDataLineNormalizer();
     let pendingEventType = "";
 
@@ -268,9 +298,29 @@ export async function validateResponseQuality(
           continue;
         }
 
+        applyOpenAiLifecycleEvent(parsed, openAi);
+
         const eventType =
           (typeof parsed.type === "string" ? parsed.type : null) || pendingEventType || "";
         pendingEventType = "";
+
+        // Tool-call turns must be allowed to reach their terminal chunk before
+        // this quality probe returns. Otherwise a provider that closes after
+        // emitting tool-call deltas is reported as HTTP 200, and the combo
+        // never gets a chance to fail over. Plain text streams retain the
+        // existing bounded-peek behavior.
+        if (openAi.hasToolCallPayload) {
+          if (openAi.hasTerminalMarker) return true;
+          continue;
+        }
+
+        // Reasoning-only OpenAI deltas are not enough to accept the target:
+        // tool-call turns can emit them before the actual call or an empty
+        // terminal sequence. Keep peeking until visible content, a tool call,
+        // or the terminal EOF checks below prove the stream is healthy.
+        if (isOpenAIChoicesPayload(parsed) && !hasOpenAIVisibleStreamValue(parsed)) {
+          continue;
+        }
 
         if (isKnownNonClaudeStreamPayload(parsed, eventType)) {
           return true;
@@ -360,6 +410,30 @@ export async function validateResponseQuality(
               "Streaming response ended with no recognized content — marking as invalid for combo failover"
             );
             return { valid: false, reason: "streaming no recognized content" };
+          }
+
+          // Issue #7285 plus tool-call hardening: a stream carrying OpenAI
+          // choices but no terminal finish_reason is truncated. `[DONE]` is
+          // not enough evidence here; a healthy stream with content/tool calls
+          // exits the bounded peek above, while an empty/partial stream must
+          // fail over rather than be forwarded as a synthetic 200/stop.
+          if (
+            openAi.hasChoicePayload &&
+            !openAi.hasTerminalMarker &&
+            (!anyContentFound || openAi.hasToolCallPayload)
+          ) {
+            log.warn?.(
+              "COMBO",
+              openAi.hasToolCallPayload
+                ? "Streaming OpenAI tool-call response ended without finish_reason — marking as invalid for combo failover"
+                : "Streaming OpenAI-shape response ended without finish_reason — marking as invalid for combo failover"
+            );
+            return {
+              valid: false,
+              reason: openAi.hasToolCallPayload
+                ? "streaming openai tool-call truncated without finish_reason"
+                : "streaming openai truncated without finish_reason",
+            };
           }
 
           // Incomplete lifecycle or non-Claude stream — replay all buffered
@@ -460,7 +534,9 @@ export async function validateResponseQuality(
   if (errorIsMeaningful) {
     const envelopeText = extractEnvelopeErrorText(json);
     const errMsg =
-      rawError && typeof rawError === "object" && typeof (rawError as Record<string, unknown>).message === "string"
+      rawError &&
+      typeof rawError === "object" &&
+      typeof (rawError as Record<string, unknown>).message === "string"
         ? ((rawError as Record<string, unknown>).message as string)
         : envelopeText || JSON.stringify(rawError).substring(0, 200);
     return { valid: false, reason: `upstream error in 200 body: ${errMsg}` };
@@ -468,8 +544,7 @@ export async function validateResponseQuality(
   {
     const envelopeText = extractEnvelopeErrorText(json);
     if (envelopeText && EXHAUSTION_MARKER_PATTERN.test(envelopeText)) {
-      const snippet =
-        envelopeText.length > 80 ? `${envelopeText.slice(0, 80)}…` : envelopeText;
+      const snippet = envelopeText.length > 80 ? `${envelopeText.slice(0, 80)}…` : envelopeText;
       return { valid: false, reason: `upstream exhaustion marker in 200 body: ${snippet}` };
     }
   }
