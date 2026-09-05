@@ -256,11 +256,6 @@ export function normalizeCodexTools(
       stripUnsupportedRegexPatterns(parameters)
     );
 
-    // Codex/OpenAI Responses API rejects `pattern` fields using regex lookaround
-    // (e.g. `^(?=.*@).+$`) with a 400 "regex lookaround is not supported" error.
-    // Strip those before the schema reaches upstream (9router#1556).
-    const sanitizedParameters = stripUnsupportedRegexPatterns(parameters);
-
     // Rewrite in-place to Responses format
     for (const key of Object.keys(tool)) {
       delete tool[key];

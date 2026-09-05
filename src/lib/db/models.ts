@@ -756,25 +756,6 @@ function applyTriStateBooleanOverride(
   next[field] = Boolean(updates[field]);
 }
 
-/**
- * Apply a tri-state boolean override from `updates` onto `next`:
- * field absent → keep whatever `next` already carries; explicit `null` → clear
- * the override (callers fall back to their heuristic); anything else → persist
- * the coerced boolean.
- */
-function applyTriStateBooleanOverride(
-  next: JsonRecord,
-  updates: Record<string, unknown>,
-  field: string
-): void {
-  if (!Object.prototype.hasOwnProperty.call(updates, field)) return;
-  if (updates[field] === null) {
-    delete next[field];
-    return;
-  }
-  next[field] = Boolean(updates[field]);
-}
-
 export async function updateCustomModel(
   providerId: string,
   modelId: string,

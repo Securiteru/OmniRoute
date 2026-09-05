@@ -152,18 +152,6 @@ function logSwallowedDriverError(driver: string, err: unknown): void {
   console.debug(`[DB] Sync driver '${driver}' failed to open, will try next driver: ${message}`);
 }
 
-/**
- * Logs the underlying cause of a swallowed sync-driver failure (#7288
- * secondary finding). tryOpenSync() used to swallow both driver errors in
- * empty catch {} blocks, so an ABI mismatch or permission error never
- * reached the logs — only the generic "(falhou)"/"(indisponível)" strings
- * in core.ts's thrown message survived, making the failure undiagnosable.
- */
-function logSwallowedDriverError(driver: string, err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
-  console.debug(`[DB] Sync driver '${driver}' failed to open, will try next driver: ${message}`);
-}
-
 declare global {
   var __omnirouteSqlJsAdapters: Map<string, SqliteAdapter> | undefined;
   var __omnirouteSqlJsInitPromises: Map<string, Promise<SqliteAdapter>> | undefined;
