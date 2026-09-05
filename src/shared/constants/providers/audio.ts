@@ -21,6 +21,15 @@ export const AUDIO_ONLY_PROVIDERS = {
     textIcon: "AA",
     website: "https://assemblyai.com",
   },
+  soniox: {
+    id: "soniox",
+    alias: "sx",
+    name: "Soniox",
+    icon: "mic",
+    color: "#5B5BD6",
+    textIcon: "SX",
+    website: "https://soniox.com",
+  },
   elevenlabs: {
     id: "elevenlabs",
     alias: "el",
@@ -38,6 +47,15 @@ export const AUDIO_ONLY_PROVIDERS = {
     color: "#FF4F8B",
     textIcon: "CA",
     website: "https://cartesia.ai",
+  },
+  fishaudio: {
+    id: "fishaudio",
+    alias: "fishaudio",
+    name: "Fish Audio",
+    icon: "graphic_eq",
+    color: "#3B82F6",
+    textIcon: "FA",
+    website: "https://fish.audio",
   },
   playht: {
     id: "playht",
@@ -86,5 +104,17 @@ export const AUDIO_ONLY_PROVIDERS = {
     color: "#FF5C35",
     textIcon: "RV",
     website: "https://www.rev.ai",
+  },
+
+  speechmatics: {
+    id: "speechmatics",
+    alias: "sm",
+    name: "Speechmatics",
+    icon: "record_voice_over",
+    color: "#0A2540",
+    textIcon: "SM",
+    website: "https://www.speechmatics.com",
+    hasFree: true,
+    freeNote: "Free tier — 8 hours/month, no credit card required. Batch (async) mode only.",
   },
 };

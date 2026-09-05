@@ -11,8 +11,8 @@
  * 1. Theme-aware static SVGs (`THEMED_SVGS`, e.g. arena-light/dark for lmarena)
  * 2. Try /providers/{id}.svg (local SVG assets — fastest, cached separately from JS bundle)
  * 3. Try @lobehub/icons direct React components (no @lobehub/ui peer runtime)
- * 4. Fall back to thesvg.org CDN (external SVG)
- * 5. Fall back to /providers/{id}.png (legacy static assets)
+ * 4. Try /providers/{id}.png (legacy static assets)
+ * 5. Fall back to thesvg.org CDN (external SVG)
  * 6. Fall back to a generic AI icon
  *
  * Usage:
@@ -81,6 +81,7 @@ const KNOWN_SVGS = new Set([
   "cartesia",
   "cerebras",
   "charm-hyper",
+  "cheaperinference",
   "chipotle",
   "chutes",
   "clarifai",
@@ -114,6 +115,7 @@ const KNOWN_SVGS = new Set([
   "fal",
   "fireworks",
   "freeaiapikey",
+  "freebuff",
   "freemodel-dev",
   "friendli",
   "galadriel",
@@ -125,7 +127,6 @@ const KNOWN_SVGS = new Set([
   "google",
   "grok",
   "groq",
-  "hackclub",
   "haiper",
   "hcnsec",
   "heroku",
@@ -170,6 +171,7 @@ const KNOWN_SVGS = new Set([
   "openadapter",
   "openai",
   "openclaw",
+  "openference",
   "opencode",
   "openrouter",
   "orcarouter",
@@ -183,10 +185,10 @@ const KNOWN_SVGS = new Set([
   "pollinations",
   "poolside",
   "publicai",
-  "puter",
   "qianfan",
   "qiniu",
   "qwen",
+  "qwencloud",
   "recraft",
   "replicate",
   "requesty",
@@ -200,6 +202,7 @@ const KNOWN_SVGS = new Set([
   "sensenova",
   "serper-search",
   "snowflake",
+  "soniox",
   "sparkdesk",
   "stepfun",
   "sumopod",
@@ -214,6 +217,7 @@ const KNOWN_SVGS = new Set([
   "trae",
   "udio",
   "uncloseai",
+  "unorouter",
   "upstage",
   "v0",
   "veoaifree-web",
@@ -223,7 +227,6 @@ const KNOWN_SVGS = new Set([
   "voyage",
   "wafer",
   "wandb",
-  "windsurf",
   "x5lab",
   "xai",
   "xinference",
@@ -235,6 +238,12 @@ const KNOWN_SVGS = new Set([
   "zenmux-free",
   "zhipu",
 ]);
+
+const LOCAL_SVG_ALIASES: Record<string, string> = {
+  "cursor-api": "cursor",
+  "qwen-cloud": "qwencloud",
+  "qwen-cloud-token-plan": "qwencloud",
+};
 
 const KNOWN_PNGS = new Set([
   "adapta-web",
@@ -253,6 +262,7 @@ const KNOWN_PNGS = new Set([
   "linkup-search",
   "llamafile",
   "llamagate",
+  "logfare",
   "maritalk",
   "nanobot",
   "nanogpt",
@@ -262,6 +272,7 @@ const KNOWN_PNGS = new Set([
   "piapi",
   "predibase",
   "reka",
+  "dahl",
   "zeroclaw",
 ]);
 
@@ -275,6 +286,35 @@ const THEMED_SVGS: Record<string, { light: string; dark: string }> = {
     light: "/providers/arena-light.svg",
     dark: "/providers/arena-dark.svg",
   },
+  // Kimi (Moonshot AI) official-partnership logomarks (2026-07): the official
+  // rounded-square badge in Kimi's brand blue (#1783FF — see KIMI_BRAND_COLOR in
+  // featuredProviders.ts) for the 3 visible Kimi-family cards. This replaces two
+  // weaker fallbacks: kimi-coding/kimi-web previously fell through to the
+  // third-party LobeHub "Kimi" icon (Tier 3, KNOWN_SVGS has no "kimi-coding"/
+  // "kimi-web" entry), and moonshot's `/providers/moonshot.svg` uses
+  // `fill="currentColor"`, which never resolves against the page theme because
+  // Tier 2 renders it inside a plain `<img>` (no CSS-inheritance path for an
+  // externally-referenced SVG document) — it stayed black in dark mode. Asset
+  // filenames name the BACKGROUND each mark is designed for (Kimi's own naming),
+  // matching the light/dark pairing used elsewhere in this map.
+  "kimi-coding": {
+    light: "/providers/kimi-logomark-light.svg",
+    dark: "/providers/kimi-logomark-dark.svg",
+  },
+  "kimi-web": {
+    light: "/providers/kimi-logomark-light.svg",
+    dark: "/providers/kimi-logomark-dark.svg",
+  },
+  moonshot: {
+    light: "/providers/kimi-logomark-light.svg",
+    dark: "/providers/kimi-logomark-dark.svg",
+  },
+};
+
+const PROVIDER_ICON_ALIASES: Record<string, string> = {
+  "opencode-go": "opencode",
+  "opencode-zen": "opencode",
+  "poe-web": "poe",
 };
 
 const ProviderIcon = memo(function ProviderIcon({
@@ -289,10 +329,11 @@ const ProviderIcon = memo(function ProviderIcon({
   fallbackColor,
 }: ProviderIconProps) {
   const { isDark } = useTheme();
-  const normalizedId = providerId.toLowerCase();
+  const normalizedId = PROVIDER_ICON_ALIASES[providerId.toLowerCase()] || providerId.toLowerCase();
+  const localSvgId = LOCAL_SVG_ALIASES[normalizedId] || normalizedId;
   const lobeIcon = getLobeProviderIcon(normalizedId, type);
   const themedSvg = THEMED_SVGS[normalizedId];
-  const hasSvg = KNOWN_SVGS.has(normalizedId);
+  const hasSvg = KNOWN_SVGS.has(localSvgId);
   const hasPng = KNOWN_PNGS.has(normalizedId);
 
   const [failedAssets, setFailedAssets] = useState<Record<string, true>>({});
@@ -360,34 +401,56 @@ const ProviderIcon = memo(function ProviderIcon({
         className={className}
         style={{ display: "inline-flex", alignItems: "center", ...style }}
       >
-        <Image
+        {/* eslint-disable-next-line @next/next/no-img-element -- themed local SVG asset; see the Tier 2 comment for why these use a plain <img> */}
+        <img
           src={themedSrc}
           alt={providerId}
           width={size}
           height={size}
-          style={{ objectFit: "contain" }}
+          style={{
+            objectFit: "contain",
+            flex: "none",
+            width: "auto",
+            height: "auto",
+            maxWidth: size,
+            maxHeight: size,
+          }}
           onError={() => setFailedAssets((current) => ({ ...current, [themedKey]: true }))}
-          unoptimized
         />
       </span>
     );
   }
 
-  // Tier 2: Local SVG — fastest, cached separately from the JS bundle
+  // Tier 2: Local SVG — fastest, cached separately from the JS bundle.
+  // Rendered as a plain <img> (not next/image): provider SVGs carry their own
+  // intrinsic aspect ratio (e.g. opencode.svg is 234×42), and next/image's
+  // dev-mode check warns whenever the layout size differs from the square
+  // width/height attributes — a false positive for non-square logos rendered
+  // at fixed icon sizes. We keep `width/height` attributes for layout reserve
+  // but let the intrinsic ratio win on both axes (`width/height: "auto"`) so
+  // wide logos like opencode render at their true aspect ratio instead of
+  // being letterboxed into a 1:1 box.
   if (hasSvg && !svgFailed) {
     return (
       <span
         className={className}
         style={{ display: "inline-flex", alignItems: "center", ...style }}
       >
-        <Image
-          src={`/providers/${normalizedId}.svg`}
+        {/* eslint-disable-next-line @next/next/no-img-element -- local static SVG asset, see comment above */}
+        <img
+          src={`/providers/${localSvgId}.svg`}
           alt={providerId}
           width={size}
           height={size}
-          style={{ objectFit: "contain" }}
+          style={{
+            objectFit: "contain",
+            flex: "none",
+            width: "auto",
+            height: "auto",
+            maxWidth: size,
+            maxHeight: size,
+          }}
           onError={() => setFailedAssets((current) => ({ ...current, [svgKey]: true }))}
-          unoptimized
         />
       </span>
     );
@@ -409,27 +472,7 @@ const ProviderIcon = memo(function ProviderIcon({
     );
   }
 
-  // Tier 4: thesvg.org CDN — external SVG fallback for unknown providers
-  if (!theSvgFailed) {
-    return (
-      <span
-        className={className}
-        style={{ display: "inline-flex", alignItems: "center", ...style }}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element -- external SVG from thesvg.org, not a static/known asset */}
-        <img
-          src={`https://thesvg.org/icons/${normalizedId}/default.svg`}
-          alt={providerId}
-          width={size}
-          height={size}
-          style={{ objectFit: "contain", flex: "none" }}
-          onError={() => setFailedAssets((current) => ({ ...current, [theSvgKey]: true }))}
-        />
-      </span>
-    );
-  }
-
-  // Tier 5: Local PNG — last resort before generic icon
+  // Tier 4: Known local PNG — avoid a failing external request when a bundled asset exists
   if (hasPng && !pngFailed) {
     return (
       <span
@@ -444,6 +487,26 @@ const ProviderIcon = memo(function ProviderIcon({
           style={{ objectFit: "contain" }}
           onError={() => setFailedAssets((current) => ({ ...current, [pngKey]: true }))}
           unoptimized
+        />
+      </span>
+    );
+  }
+
+  // Tier 5: thesvg.org CDN — external SVG fallback for unknown providers
+  if (!theSvgFailed) {
+    return (
+      <span
+        className={className}
+        style={{ display: "inline-flex", alignItems: "center", ...style }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element -- external SVG from thesvg.org, not a static/known asset */}
+        <img
+          src={`https://thesvg.org/icons/${normalizedId}/default.svg`}
+          alt={providerId}
+          width={size}
+          height={size}
+          style={{ objectFit: "contain", flex: "none" }}
+          onError={() => setFailedAssets((current) => ({ ...current, [theSvgKey]: true }))}
         />
       </span>
     );

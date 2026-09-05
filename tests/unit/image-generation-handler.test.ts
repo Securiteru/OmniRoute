@@ -764,9 +764,9 @@ test("handleImageGeneration sends Antigravity image requests with native image_g
       "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent"
     );
     assert.equal(captured.headers.Authorization, "Bearer ag-token");
-    assert.equal(captured.headers["x-client-name"], "antigravity");
+    assert.equal(captured.headers["x-client-name"], undefined);
     assert.equal(captured.headers["x-goog-user-project"], undefined);
-    assert.match(captured.headers["User-Agent"], /^Antigravity\//);
+    assert.match(captured.headers["User-Agent"], /^antigravity\/ide\/2\.1\.1 /);
     assert.equal(captured.headers["x-goog-api-client"], undefined);
     assert.equal(captured.body.project, "project-123");
     assert.match(captured.body.requestId, /^image_gen\//);
@@ -1949,10 +1949,17 @@ test("handleImageGeneration (codex) surfaces an error when no image_generation_c
   }
 });
 
-test("handleImageGeneration (codex) propagates upstream HTTP errors", async () => {
+test("handleImageGeneration (codex) sanitizes upstream HTTP errors", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
-    new Response("upstream boom", { status: 403, headers: { "content-type": "text/plain" } });
+    new Response(
+      JSON.stringify({
+        error: "upstream boom",
+        authorization: "Bearer upstream-secret",
+        echoed: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAE=",
+      }),
+      { status: 403, headers: { "content-type": "application/json" } }
+    );
 
   try {
     const result = await handleImageGeneration({
@@ -1962,7 +1969,10 @@ test("handleImageGeneration (codex) propagates upstream HTTP errors", async () =
     });
     assert.equal(result.success, false);
     assert.equal(result.status, 403);
-    assert.match(result.error, /upstream boom/);
+    const safeError = JSON.stringify(result.error);
+    assert.match(safeError, /upstream boom/);
+    assert.doesNotMatch(safeError, /upstream-secret|iVBORw0KGgo/);
+    assert.match(safeError, /REDACTED_DATA_URL/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -2012,6 +2022,60 @@ test("handleImageGeneration (codex) forwards size and maps GPT-Image quality to 
       log: null,
     });
     assert.deepEqual(captured.tools, [{ type: "image_generation", output_format: "png" }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+// #8307 — some ChatGPT accounts can run Codex but lack entitlement for the specific
+// requested image model, and the upstream 400 for that exact case is retryable on a
+// sibling account: executeImageWithCredentialFallback (route.ts) already retries on
+// this signal when the handler marks the failure `retryable: true` — mirroring the
+// existing 401 auto-rotate path, no new retry loop needed in the handler itself.
+test("handleImageGeneration (codex) marks the ChatGPT-account model-access 400 as retryable", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        error: {
+          message:
+            "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.",
+        },
+      }),
+      { status: 400, headers: { "content-type": "application/json" } }
+    );
+
+  try {
+    const result = await handleImageGeneration({
+      body: { model: "codex/gpt-5.6-sol", prompt: "kitten" },
+      credentials: { accessToken: "codex-token" },
+      log: null,
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.status, 400);
+    assert.equal(result.retryable, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("handleImageGeneration (codex) does not mark an ordinary 400 as retryable", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(JSON.stringify({ error: { message: "Invalid prompt" } }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+
+  try {
+    const result = await handleImageGeneration({
+      body: { model: "codex/gpt-5.6-sol", prompt: "kitten" },
+      credentials: { accessToken: "codex-token" },
+      log: null,
+    });
+    assert.equal(result.success, false);
+    assert.equal(result.status, 400);
+    assert.equal(result.retryable, undefined);
   } finally {
     globalThis.fetch = originalFetch;
   }

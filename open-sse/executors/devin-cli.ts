@@ -21,9 +21,9 @@
  *   4. ~/.local/share/devin/bin/devin          (Linux installer)
  *
  * Model selection:
- *   Passed directly to ACP session/new as `model` param (e.g. "swe-1.6-fast",
- *   "claude-sonnet-4.6", "gpt-5.5-high"). Devin CLI resolves them against its
- *   model_configs_v2.bin catalog on startup.
+ *   Passed directly to ACP session/new as `model` param (e.g. "swe-1-6-fast",
+ *   "claude-sonnet-4-6", "gpt-5-5-high"). Devin CLI resolves them against its
+ *   model_configs_v4.bin catalog on startup.
  */
 
 import { spawn } from "node:child_process";
@@ -153,23 +153,12 @@ export class DevinCliExecutor extends BaseExecutor {
 
         const env: NodeJS.ProcessEnv = { ...process.env };
         if (apiKey) env.WINDSURF_API_KEY = apiKey;
-        // Prefer DEVIN_MODEL so the session starts on the requested subscription
-        // model (e.g. swe-1-7 = SWE-1.7 Max). More reliable than set_config_option
-        // racing the model catalog load inside OmniRoute's spawn path.
-        if (model && model.trim()) {
-          env.DEVIN_MODEL = model.trim();
-        }
 
-        // Use the default agent (not summarizer): summarizer has an empty model
-        // catalog and rejects session/set_config_option, so subscription models
-        // like swe-1-7 (SWE-1.7 Max) cannot be selected. Optional override:
-        // DEVIN_ACP_AGENT_TYPE=summarizer restores the tool-less agent.
-        const agentType = process.env.DEVIN_ACP_AGENT_TYPE?.trim();
-        const acpArgs = agentType ? ["acp", "--agent-type", agentType] : ["acp"];
         const isWin = process.platform === "win32";
-        const child = spawn(devinBin, acpArgs, {
+        const child = spawn(devinBin, ["acp", "--agent-type", "summarizer"], {
           env,
           stdio: ["pipe", "pipe", "pipe"],
+          windowsHide: true,
           // On Windows, devin.exe may need shell resolution
           shell: isWin,
           // Linux/macOS: run in its own process group so we can kill the whole tree.
@@ -269,8 +258,10 @@ export class DevinCliExecutor extends BaseExecutor {
             /* ignore */
           }
 
-          // Give it 2s to exit cleanly, then SIGKILL the whole process group.
-          const killTimer = setTimeout(() => safeKill("SIGKILL", true), 2000);
+          // Give it 2s to exit cleanly, then SIGKILL the whole process group
+          const killTimer = setTimeout(() => {
+            safeKill("SIGKILL", true);
+          }, 2000);
           killTimer.unref?.();
 
           controller.close();
@@ -298,16 +289,13 @@ export class DevinCliExecutor extends BaseExecutor {
             // ── Initialize response ───────────────────────────────────────
             if (!initDone && msg.result !== undefined && !msg.method) {
               initDone = true;
-              // Create session. Devin CLI requires cwd + mcpServers (strict schema).
-              // Prefer a stable workspace under HOME — the OmniRoute process cwd is the
-              // Next standalone build dir, which can confuse tools/MCP discovery.
-              // Model is applied after session creation via set_config if supported;
-              // including unknown fields in session/new has caused -32602 on some builds.
-              const sessionCwd =
-                process.env.DEVIN_ACP_CWD?.trim() || process.env.HOME || process.cwd();
+              // Create session: send session/new with model and a temp cwd.
+              // `mcpServers` is NOT optional — devin CLI 3000.2.x rejects the
+              // request with -32602 `missing field \`mcpServers\`` if omitted.
               sendRpc("session/new", {
-                cwd: sessionCwd,
+                cwd: process.cwd(),
                 mcpServers: [],
+                model: model || undefined,
               });
               continue;
             }
@@ -321,45 +309,74 @@ export class DevinCliExecutor extends BaseExecutor {
                 return;
               }
               sessionCreated = true;
+              // Send the prompt
               promptSent = true;
               sendRpc("session/prompt", {
                 sessionId,
+                // ACP names this field `prompt`; `content` is rejected with
+                // -32602 `missing field \`prompt\`` by devin CLI 3000.2.x.
                 prompt: [{ type: "text", text: promptText }],
               });
               continue;
             }
 
-            // ── session/prompt response (ack) ─────────────────────────────
-            if (sessionCreated && promptSent && msg.result !== undefined && !msg.method) {
-              // Acknowledged — streaming notifications will follow
-              continue;
-            }
-
-            // ── Current Devin ACP completion notification ──────────────────
-            if (msg.method === "_cognition.ai/agent_stopped") {
-              finish();
-              return;
-            }
+            // NOTE: `session/prompt` is a unary call — its response IS the end of
+            // the turn (it carries `stopReason`), not an ack. Swallowing it here
+            // used to hang the request until the client timed out, so the final
+            // result is handled by the branch further down instead.
 
             // ── Streaming notifications (session/update) ──────────────────
             if (msg.method === "session/update" || msg.method === "$/update") {
               const params = msg.params as Record<string, unknown> | undefined;
               if (!params) continue;
 
-              const update = (params.update as Record<string, unknown> | undefined) || {};
-              const type = (params.type || update.sessionUpdate) as string | undefined;
-              const content = update.content ?? params.content;
+              // devin CLI 3000.2.x nests the payload:
+              //   params.update = { sessionUpdate: "agent_message_chunk",
+              //                     content: { type: "text", text: "…" } }
+              // Older/other ACP agents use a flat `params.type` + `params.content`.
+              const update = params.update as Record<string, unknown> | undefined;
+              const kind = (update?.sessionUpdate as string | undefined) ?? undefined;
+              const type = kind ?? (params.type as string | undefined);
 
-              if (
+              if (kind === "agent_message_chunk") {
+                const delta = extractChunkText(update?.content);
+                if (delta) {
+                  if (!roleEmitted) {
+                    emit(
+                      `data: ${JSON.stringify({
+                        id: responseId,
+                        object: "chat.completion.chunk",
+                        created,
+                        model,
+                        choices: [
+                          {
+                            index: 0,
+                            delta: { role: "assistant", content: "" },
+                            finish_reason: null,
+                          },
+                        ],
+                      })}\n\n`
+                    );
+                    roleEmitted = true;
+                  }
+                  totalText += delta;
+                  emit(
+                    `data: ${JSON.stringify({
+                      id: responseId,
+                      object: "chat.completion.chunk",
+                      created,
+                      model,
+                      choices: [{ index: 0, delta: { content: delta }, finish_reason: null }],
+                    })}\n\n`
+                  );
+                }
+              } else if (
                 type === "message_delta" ||
                 type === "text_delta" ||
-                type === "content_delta" ||
-                type === "agent_message_chunk"
+                type === "content_delta"
               ) {
                 const delta =
-                  (typeof content === "string"
-                    ? content
-                    : ((content as Record<string, unknown> | undefined)?.text as string)) ||
+                  (params.content as string) ||
                   (params.delta as string) ||
                   (params.text as string) ||
                   "";
@@ -445,15 +462,7 @@ export class DevinCliExecutor extends BaseExecutor {
 
             // ── Error responses ───────────────────────────────────────────
             if (msg.error) {
-              const detail =
-                msg.error.data !== undefined
-                  ? ` ${typeof msg.error.data === "string" ? msg.error.data : JSON.stringify(msg.error.data)}`
-                  : "";
-              log?.warn?.(
-                "DEVIN",
-                `ACP error id=${String(msg.id)} code=${msg.error.code} msg=${msg.error.message}${detail}`
-              );
-              finish(`Devin ACP error ${msg.error.code}: ${msg.error.message}${detail}`);
+              finish(`Devin ACP error ${msg.error.code}: ${msg.error.message}`);
               return;
             }
           }
@@ -474,12 +483,10 @@ export class DevinCliExecutor extends BaseExecutor {
         });
 
         // ── Send initialize ───────────────────────────────────────────────
-        // Devin CLI 3000.x negotiates ACP protocolVersion 1 (string "0.3" also works,
-        // but integer 1 is the version the agent returns and documents).
         sendRpc("initialize", {
-          protocolVersion: 1,
+          protocolVersion: "0.3",
           clientInfo: { name: "omniroute", version: "1.0" },
-          clientCapabilities: {},
+          capabilities: {},
         });
       },
     });
@@ -503,6 +510,20 @@ export class DevinCliExecutor extends BaseExecutor {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Try to extract text from a final ACP session/prompt result object. */
+/**
+ * Pull display text out of an ACP `session/update` content payload, which may be
+ * a bare string, a single `{type:"text", text}` block, or an array of blocks.
+ */
+function extractChunkText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map((c) => extractChunkText(c)).join("");
+  if (content && typeof content === "object") {
+    const text = (content as Record<string, unknown>).text;
+    if (typeof text === "string") return text;
+  }
+  return "";
+}
+
 function extractResultText(result: Record<string, unknown>): string {
   // Common result shapes:
   // { message: { content: "..." } }

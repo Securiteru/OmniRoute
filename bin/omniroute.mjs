@@ -14,15 +14,21 @@
  * All other commands are routed through Commander (bin/cli/program.mjs).
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import updateNotifier from "update-notifier";
+let updateNotifier = null;
+try {
+  updateNotifier = (await import("update-notifier")).default;
+} catch {
+  // update-notifier is optional in pruned standalone environments
+}
 import { isNativeBinaryCompatible } from "../scripts/build/native-binary-compat.mjs";
 import { getNodeRuntimeSupport, getNodeRuntimeWarning } from "./nodeRuntimeSupport.mjs";
 import { getDefaultDataDir } from "./cli/data-dir.mjs";
 import { shouldProvisionStorageKey } from "./cli/utils/storageKeyProvision.mjs";
 import { isVersionFastPath } from "./cli/utils/versionFastPath.mjs";
+import { parseEnvValue } from "./cli/utils/parseEnvValue.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -43,20 +49,54 @@ if (isVersionFastPath(process.argv)) {
   process.exit(0);
 }
 
+// MCP stdio transport uses stdout exclusively for JSON-RPC messages. Redirect
+// console.log/warn to stderr before anything else runs — including the tsx/esm and
+// polyfill imports below, since those (and their transitive module graphs, e.g. DB
+// init) can themselves log during evaluation. Redirecting after those imports let
+// early output leak straight into the JSON-RPC stream and corrupt it client-side
+// (e.g. Claude Desktop: "Unexpected token 'D', \"[DB] Changi\"... is not valid JSON").
+if (process.argv.includes("--mcp")) {
+  const { Console } = await import("node:console");
+  const stderrConsole = new Console({ stdout: process.stderr, stderr: process.stderr });
+  console.log = stderrConsole.log.bind(stderrConsole);
+  console.warn = stderrConsole.warn.bind(stderrConsole);
+}
+
 // Register tsx so dynamic imports of .ts source files (referenced as .js per
 // TypeScript conventions) resolve correctly. The build never emits .js for
 // src/lib/cli-helper/, so tsx handles the .ts → .js resolution at runtime.
 await import("tsx/esm");
 await import("../open-sse/utils/setupPolyfill.ts");
 
-// MCP stdio transport uses stdout exclusively for JSON-RPC messages.
-// Redirect console.log/warn to stderr early (before loadEnvFile and DB init)
-// so no startup output corrupts the protocol.
-if (process.argv.includes("--mcp")) {
-  const { Console } = await import("node:console");
-  const stderrConsole = new Console({ stdout: process.stderr, stderr: process.stderr });
-  console.log = stderrConsole.log.bind(stderrConsole);
-  console.warn = stderrConsole.warn.bind(stderrConsole);
+// #7791: tsx's tsconfig-path resolution does not apply when OmniRoute is
+// installed globally (files live under node_modules/omniroute/), so bare
+// `@/...` specifiers (declared in tsconfig.json paths as `@/* → ./src/*`)
+// fail with ERR_MODULE_NOT_FOUND. Register an ESM resolve hook that maps
+// `@/...` to absolute file URLs under <ROOT>/src/. Safe no-op in dev checkout
+// (paths already resolve via tsconfig) and when ROOT has no `src/` dir.
+const { registerAliasResolver } = await import("./aliasResolver.mjs");
+await registerAliasResolver(ROOT);
+
+// Electron persists secrets (JWT_SECRET, API_KEY_SECRET, STORAGE_ENCRYPTION_KEY) to
+// `<DATA_DIR>/server.env` (electron/main.js), never `.env`. Migrating an existing
+// install (storage.sqlite + server.env) to the CLI left those secrets undiscoverable —
+// the CLI only ever looked for `.env`, so the STORAGE_ENCRYPTION_KEY needed to decrypt
+// the migrated database was silently dropped (#7302). One-time, one-directory migration:
+// if `<dataDir>/.env` is absent but `<dataDir>/server.env` is present, copy it to `.env`
+// so it flows through the normal env-loading path below. Never overwrites an existing
+// `.env` — an explicit `.env` always wins over a legacy `server.env`.
+function migrateElectronServerEnv(dataDir) {
+  try {
+    const envPath = join(dataDir, ".env");
+    const serverEnvPath = join(dataDir, "server.env");
+    if (existsSync(envPath) || !existsSync(serverEnvPath)) return;
+    writeFileSync(envPath, readFileSync(serverEnvPath, "utf-8"), "utf-8");
+    console.log(
+      `  \x1b[2m♻ Migrated Electron secrets from ${serverEnvPath} to ${envPath}\x1b[0m`
+    );
+  } catch {
+    // Ignore errors migrating server.env — fall back to normal env loading below.
+  }
 }
 
 function loadEnvFile() {
@@ -68,6 +108,8 @@ function loadEnvFile() {
     seenEnvPaths.add(envPath);
     envPaths.push(envPath);
   };
+
+  migrateElectronServerEnv(process.env.DATA_DIR || getDefaultDataDir());
 
   if (process.env.DATA_DIR) {
     addEnvPath(join(process.env.DATA_DIR, ".env"));
@@ -82,6 +124,9 @@ function loadEnvFile() {
     addEnvPath(join(ROOT, ".env"));
   }
 
+  const keyOrigin = new Map();
+  const shadowed = new Map();
+
   for (const envPath of envPaths) {
     try {
       if (existsSync(envPath)) {
@@ -92,25 +137,45 @@ function loadEnvFile() {
           const eqIdx = trimmed.indexOf("=");
           if (eqIdx > 0) {
             const key = trimmed.slice(0, eqIdx).trim();
-            const value = trimmed.slice(eqIdx + 1).trim();
             if (process.env[key] === undefined) {
-              process.env[key] = value.replace(/^["']|["']$/g, "");
+              process.env[key] = parseEnvValue(trimmed.slice(eqIdx + 1));
+              keyOrigin.set(key, envPath);
+            } else if (!shadowed.has(key)) {
+              // The line is inert: something set this key first. Report it once
+              // per key, whether the winner was an earlier file or the process
+              // environment (#6194: a shell's own HOSTNAME beat the .env and the
+              // server bound to the wrong address in silence).
+              shadowed.set(key, { winner: keyOrigin.get(key) ?? null, loser: envPath });
             }
           }
         }
         loadedEnvPaths.push(envPath);
       }
-    } catch {
-      // Ignore errors reading env files.
+    } catch (err) {
+      console.warn(`  \x1b[33m⚠ Could not read ${envPath}: ${err?.message ?? err}\x1b[0m`);
     }
   }
 
   for (const envPath of loadedEnvPaths) {
     console.log(`  \x1b[2m📋 Loaded env from ${envPath}\x1b[0m`);
   }
+
+  for (const [key, { winner, loser }] of shadowed) {
+    const setter = winner ? winner : "the environment";
+    console.warn(`  \x1b[33m⚠ ${key} in ${loser} is ignored, ${setter} set it first\x1b[0m`);
+  }
 }
 
 loadEnvFile();
+
+// Next.js has no android branch in getCacheDirectory(): if ~/.cache (and tmp)
+// do not already exist it aborts the instrumentation hook, and every request
+// then returns a silent HTTP 500 even though the CLI still looks "running".
+// Create the cache dir (and set XDG_CACHE_HOME when unset) before serve/Next.
+{
+  const { ensureAndroidCacheDir } = await import("./cli/utils/ensureAndroidCacheDir.mjs");
+  ensureAndroidCacheDir();
+}
 
 // Generate STORAGE_ENCRYPTION_KEY if not set (persisted to ~/.omniroute/.env)
 // This ensures the key survives across upgrades and is not regenerated on each install.
@@ -191,8 +256,9 @@ if (shouldProvisionStorageKey(process.argv)) {
 
 // Register update notifier — checks npm once per 24h, notifies on exit via stderr.
 const _pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
-const _notifier = updateNotifier({ pkg: _pkg, updateCheckInterval: 1000 * 60 * 60 * 24 });
+const _notifier = updateNotifier ? updateNotifier({ pkg: _pkg, updateCheckInterval: 1000 * 60 * 60 * 24 }) : null;
 process.on("exit", () => {
+  if (!_notifier || !_notifier.update) return;
   if (process.env.OMNIROUTE_NO_UPDATE_NOTIFIER) return;
   if (process.env.CI) return;
   if (process.argv.includes("--quiet") || process.argv.includes("-q")) return;

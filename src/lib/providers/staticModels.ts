@@ -9,6 +9,7 @@ import {
 import { ANTIGRAVITY_PUBLIC_MODELS } from "@omniroute/open-sse/config/antigravityModelAliases.ts";
 import { getStaticQoderModels } from "@omniroute/open-sse/services/qoderCli.ts";
 import { getSearchProvider } from "@omniroute/open-sse/config/searchRegistry.ts";
+import { BAILIAN_CODING_PLAN_MODELS } from "@omniroute/open-sse/config/providers/registry/bailian-coding-plan/index.ts";
 
 import { getModelsByProviderId } from "@/shared/constants/models";
 
@@ -35,6 +36,7 @@ const STATIC_MODEL_PROVIDERS: Record<string, () => Array<{ id: string; name: str
   antigravity: () => ANTIGRAVITY_PUBLIC_MODELS.map((model) => ({ ...model })),
   claude: () => [
     { id: "claude-fable-5", name: "Claude Fable 5" },
+    { id: "claude-opus-5", name: "Claude Opus 5" },
     { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
     { id: "claude-opus-4-7", name: "Claude Opus 4.7" },
     { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
@@ -51,21 +53,7 @@ const STATIC_MODEL_PROVIDERS: Record<string, () => Array<{ id: string; name: str
     { id: "sonar-reasoning-pro", name: "Sonar Reasoning Pro (Advanced CoT + Search)" },
     { id: "sonar-deep-research", name: "Sonar Deep Research (Expert Analysis)" },
   ],
-  "bailian-coding-plan": () => [
-    // Keep in lock-step with the registry entry
-    // (open-sse/config/providers/registry/bailian-coding-plan/index.ts);
-    // bailian-coding-plan-provider.test.ts asserts static↔registry parity.
-    { id: "qwen3.7-plus", name: "Qwen3.7 Plus(vision)" },
-    { id: "qwen3-coder-plus", name: "Qwen3 Coder Plus" },
-    { id: "qwen3-coder-next", name: "Qwen3 Coder Next" },
-    { id: "glm-4.7", name: "GLM 4.7" },
-    { id: "qwen3.6-plus", name: "Qwen3.6 Plus(vision)" },
-    { id: "qwen3.5-plus", name: "Qwen3.5 Plus(vision)" },
-    { id: "qwen3-max-2026-01-23", name: "Qwen3 Max" },
-    { id: "kimi-k2.5", name: "Kimi K2.5(vision)" },
-    { id: "glm-5", name: "GLM 5" },
-    { id: "MiniMax-M2.5", name: "MiniMax M2.5" },
-  ],
+  "bailian-coding-plan": () => BAILIAN_CODING_PLAN_MODELS.map(({ id, name }) => ({ id, name })),
   gitlab: () => [{ id: "gitlab-duo-code-suggestions", name: "GitLab Duo Code Suggestions" }],
   nlpcloud: () =>
     getModelsByProviderId("nlpcloud").map((model) => ({
@@ -86,6 +74,13 @@ const STATIC_MODEL_PROVIDERS: Record<string, () => Array<{ id: string; name: str
     // so the "Available Models" UI shows something instead of a hard failure (#6142).
     { id: "devin", name: "Devin (Cognition cloud agent)" },
   ],
+  "amazon-q": () => [
+    // Amazon Q Developer shares KiroExecutor + OAuth wiring with kiro but has no
+    // discovery config or registry catalog of its own — single non-selectable
+    // placeholder so the "Available Models" UI shows something instead of the
+    // hard "does not support models listing" failure (#7820).
+    { id: "amazon-q", name: "Amazon Q Developer" },
+  ],
   "linkup-search": () => [
     // Linkup web search — the "model" is the search depth (docs.linkup.so #5571).
     { id: "standard", name: "Standard (single-iteration agentic search)" },
@@ -104,6 +99,15 @@ const STATIC_MODEL_PROVIDERS: Record<string, () => Array<{ id: string; name: str
     { id: "google_scholar", name: "Google Scholar" },
     { id: "duckduckgo", name: "DuckDuckGo" },
   ],
+  "v0-vercel-web": () => [
+    // v0-vercel-web web-cookie codegen provider — no upstream /v1/models endpoint,
+    // no registry `models` and no discovery config, so seed the current v0 lineup
+    // as a static catalog mirroring the v0-vercel API provider (shared.ts) so the
+    // model-import UI serves a list instead of the tail 400 (#10990).
+    { id: "v0-1.0-md", name: "V0 1.0 MD" },
+    { id: "v0-1.5-lg", name: "V0 1.5 LG" },
+    { id: "v0-1.5-md", name: "V0 1.5 MD" },
+  ],
   "venice-web": () => [
     // Venice.ai web-cookie provider — no upstream /v1/models endpoint, so seed the
     // current lineup as a static catalog (#6269). Venice rotates its catalog; keep
@@ -119,6 +123,7 @@ const STATIC_MODEL_PROVIDERS: Record<string, () => Array<{ id: string; name: str
 const SEARCH_TYPE_LABELS: Record<string, string> = {
   web: "Web Search",
   news: "News Search",
+  x: "X Search",
 };
 
 function formatSearchTypeLabel(searchType: string): string {
@@ -216,7 +221,7 @@ export function getStaticModelsForProvider(provider: string): LocalCatalogModel[
   if (speechProvider) {
     appendModels(speechProvider.models, {
       apiFormat: "audio",
-      supportedEndpoints: ["audio"],
+      supportedEndpoints: ["audio-speech"],
     });
   }
 
@@ -224,7 +229,7 @@ export function getStaticModelsForProvider(provider: string): LocalCatalogModel[
   if (transcriptionProvider) {
     appendModels(transcriptionProvider.models, {
       apiFormat: "audio",
-      supportedEndpoints: ["audio"],
+      supportedEndpoints: ["audio-transcriptions"],
     });
   }
 

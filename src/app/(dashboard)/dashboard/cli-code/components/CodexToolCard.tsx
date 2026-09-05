@@ -32,7 +32,7 @@ export default function CodexToolCard({
   const [selectedModel, setSelectedModel] = useState("gpt-5.6-sol");
   const [modelMappings, setModelMappings] = useState<Record<string, string>>({});
   const [reasoningEffort, setReasoningEffort] = useState("xhigh");
-  const [wireApi, setWireApi] = useState("chat");
+  const [wireApi, setWireApi] = useState("responses");
   const [modalOpen, setModalOpen] = useState(false);
   const [modalTarget, setModalTarget] = useState<string | null>(null); // null = default model, string = mapping key
   const [modelAliases, setModelAliases] = useState({});
@@ -78,6 +78,10 @@ export default function CodexToolCard({
 
   // Parse config content
   useEffect(() => {
+    if (codexStatus && !codexStatus.config) {
+      setWireApi("responses");
+    }
+
     if (codexStatus?.config) {
       const modelMatch = codexStatus.config.match(/^model\s*=\s*"([^"]+)"/im);
       if (modelMatch) setSelectedModel(modelMatch[1]);
@@ -86,7 +90,7 @@ export default function CodexToolCard({
       if (effortMatch) setReasoningEffort(effortMatch[1]);
 
       const wireMatch = codexStatus.config.match(/^wire_api\s*=\s*"([^"]+)"/im);
-      if (wireMatch) setWireApi(wireMatch[1]);
+      setWireApi(wireMatch?.[1] || "responses");
 
       const newMappings: Record<string, string> = {};
       const migrationsBlock = codexStatus.config.split("[notice.model_migrations]")[1];
@@ -606,7 +610,7 @@ openai_base_url = "${getEffectiveBaseUrl()}"
                 {/* Reasoning Effort */}
                 <div className="flex items-center gap-2">
                   <span className="w-32 shrink-0 text-sm font-semibold text-text-main text-right">
-                    Reasoning Effort
+                    {t("reasoningEffort")}
                   </span>
                   <span className="material-symbols-outlined text-text-muted text-[14px]">
                     arrow_forward
@@ -616,20 +620,20 @@ openai_base_url = "${getEffectiveBaseUrl()}"
                     onChange={(e) => setReasoningEffort(e.target.value)}
                     className="flex-1 px-2 py-1.5 bg-surface rounded text-xs border border-border focus:outline-none focus:ring-1 focus:ring-primary/50"
                   >
-                    <option value="none">None</option>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                    <option value="xhigh">XHigh</option>
-                    <option value="max">Max</option>
-                    <option value="ultra">Ultra</option>
+                    <option value="none">{t("effortNone")}</option>
+                    <option value="low">{t("effortLow")}</option>
+                    <option value="medium">{t("effortMedium")}</option>
+                    <option value="high">{t("effortHigh")}</option>
+                    <option value="xhigh">{t("effortExtraHigh")}</option>
+                    <option value="max">{t("effortMax")}</option>
+                    <option value="ultra">{t("effortUltra")}</option>
                   </select>
                 </div>
 
                 {/* Wire API */}
                 <div className="flex items-center gap-2">
                   <span className="w-32 shrink-0 text-sm font-semibold text-text-main text-right">
-                    Wire API
+                    {t("wireApi")}
                   </span>
                   <span className="material-symbols-outlined text-text-muted text-[14px]">
                     arrow_forward
@@ -647,7 +651,7 @@ openai_base_url = "${getEffectiveBaseUrl()}"
                 <div className="h-px bg-border/50 my-2"></div>
 
                 <div className="text-[11px] text-text-muted mb-2 font-medium uppercase tracking-wider text-right">
-                  Model Aliases ([notice.model_migrations])
+                  {t("modelAliases")} ([notice.model_migrations])
                 </div>
                 {CODEX_DEFAULT_MODELS.map((defaultModel) => (
                   <div key={defaultModel} className="flex items-center gap-2 group">
@@ -673,7 +677,7 @@ openai_base_url = "${getEffectiveBaseUrl()}"
                       onChange={(e) =>
                         setModelMappings({ ...modelMappings, [defaultModel]: e.target.value })
                       }
-                      placeholder={`Route ${defaultModel} to...`}
+                      placeholder={t("routeModelPlaceholder", { model: defaultModel })}
                       className="flex-1 px-2 py-1.5 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50"
                     />
                     {modelMappings[defaultModel] && (

@@ -25,8 +25,15 @@ import {
   resolveComfyUiBaseUrl,
 } from "../utils/comfyuiClient.ts";
 import { saveCallLog } from "@/lib/usageDb";
-import { getKieCallbackUrl, isJsonObject, parseKieResultJson } from "../utils/kieTask.ts";
+import {
+  getKieCallbackUrl,
+  getKieTaskId,
+  isJsonObject,
+  parseKieResultJson,
+} from "../utils/kieTask.ts";
 import { sanitizeErrorMessage } from "../utils/error.ts";
+import { handleFalMusicGeneration } from "./mediaGeneration/fal.ts";
+import { handleMinimaxMusicGeneration } from "./mediaGeneration/minimaxMusic.ts";
 
 function normalizeKieSunoModel(model: string): string {
   const map: Record<string, string> = {
@@ -119,6 +126,10 @@ export async function handleMusicGeneration({ body, credentials, log }) {
     }
   }
 
+  if (providerConfig.format === "fal-ai-music") {
+    return handleFalMusicGeneration({ model, provider, providerConfig, body, credentials, log });
+  }
+
   if (providerConfig.format === "comfyui") {
     return handleComfyUIMusicGeneration({
       model,
@@ -141,6 +152,17 @@ export async function handleMusicGeneration({ body, credentials, log }) {
   }
   if (providerConfig.format === "udio-music") {
     return handleUdioMusicGeneration({ model, provider, providerConfig, body, credentials, log });
+  }
+
+  if (providerConfig.format === "minimax-music") {
+    return handleMinimaxMusicGeneration({
+      model,
+      provider,
+      providerConfig,
+      body,
+      credentials,
+      log,
+    });
   }
 
   return {
@@ -341,7 +363,7 @@ async function handleKieMusicGeneration({
   try {
     const endpoint = new URL(url).pathname;
     const createData = await kieExecutor.createTask({ baseUrl, token, payload, endpoint });
-    const taskId = createData?.data?.taskId || createData?.taskId;
+    const taskId = getKieTaskId(createData);
     if (!taskId) {
       const errorMessage =
         createData?.msg ||

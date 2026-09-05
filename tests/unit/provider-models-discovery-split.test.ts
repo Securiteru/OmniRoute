@@ -149,6 +149,54 @@ test("providerModelsConfig aimlapi.parseResponse keeps only chat-completion mode
   assert.deepEqual(parsed, [{ id: "chat-1", name: "Chat 1" }]);
 });
 
+test("providerModelsConfig grok-cli.parseResponse preserves exact supported reasoning efforts", () => {
+  const parsed = PROVIDER_MODELS_CONFIG["grok-cli"].parseResponse({
+    models: [
+      {
+        id: "grok-4.6",
+        api_backend: "responses",
+        supports_reasoning_effort: true,
+        reasoning_efforts: [" high ", "low", "medium", "xhigh", "low"],
+      },
+      {
+        id: "grok-4.7",
+        api_backend: "responses",
+        supports_reasoning_effort: true,
+      },
+      {
+        id: "grok-4.8",
+        api_backend: "responses",
+        supports_reasoning_effort: true,
+        reasoning_efforts: ["xhigh", "unknown"],
+      },
+    ],
+  });
+
+  assert.deepEqual(parsed[0].supportedThinkingEfforts, ["high", "low", "medium"]);
+  assert.deepEqual(parsed[1].supportedThinkingEfforts, ["low", "medium", "high"]);
+  assert.equal(parsed[2].supportsThinking, true);
+  assert.equal(parsed[2].supportedThinkingEfforts, undefined);
+});
+
+test("providerModelsConfig openrouter.parseResponse keeps the full catalog (LLMs not filtered out)", () => {
+  // Generic OpenRouter discovery must stay unfiltered so sync/import/pickers
+  // and /v1/models keep every LLM. STT narrowing lives on the STT card, not here.
+  const data = {
+    data: [
+      { id: "openai/gpt-4o", architecture: { modality: "text->text" } },
+      {
+        id: "openai/whisper-1",
+        architecture: { modality: "audio->transcription" },
+      },
+    ],
+  };
+  const parsed = PROVIDER_MODELS_CONFIG.openrouter.parseResponse(data);
+  assert.deepEqual(
+    parsed.map((m: { id: string }) => m.id),
+    ["openai/gpt-4o", "openai/whisper-1"]
+  );
+});
+
 // ── codex discovery leaf ────────────────────────────────────────────────────
 
 test.beforeEach(() => {
@@ -222,6 +270,37 @@ test("codex.normalizeCodexModelsResponse parses the Codex live catalog shape", (
   assert.equal(parsed.find((model) => model.id === "gpt-5.4")?.outputTokenLimit, 128000);
   assert.equal(parsed.find((model) => model.id === "gpt-5.5")?.inputTokenLimit, 272000);
   assert.equal(parsed.find((model) => model.id === "gpt-5.5")?.outputTokenLimit, 64000);
+});
+
+test("codex.normalizeCodexModelsResponse prefers max_context_window over the context_window pricing tier", () => {
+  // The live Codex OAuth catalog reports BOTH fields: `context_window` is the
+  // first pricing tier (~272K) while `max_context_window` is the real usable
+  // window (~872K). Requests well above 272K succeed upstream (verified:
+  // gpt-5.6-luna-xhigh served 380-390K input tokens with HTTP 200), so the
+  // usable window must win when both are present.
+  const parsed = normalizeCodexModelsResponse({
+    models: [
+      {
+        slug: "gpt-5.6-luna",
+        display_name: "GPT 5.6 Luna",
+        visibility: "list",
+        supported_in_api: true,
+        context_window: 272000,
+        max_context_window: 872000,
+      },
+      {
+        slug: "gpt-5.4",
+        display_name: "GPT-5.4",
+        visibility: "list",
+        supported_in_api: true,
+        context_window: 272000,
+        max_context_window: 1000000,
+      },
+    ],
+  });
+
+  assert.equal(parsed.find((model) => model.id === "gpt-5.6-luna")?.inputTokenLimit, 872000);
+  assert.equal(parsed.find((model) => model.id === "gpt-5.4")?.inputTokenLimit, 1000000);
 });
 
 test("codex.normalizeCodexGithubCatalogResponse parses current client catalog metadata", () => {
@@ -304,7 +383,7 @@ test("codex.enrichCodexModelsFromGithubCatalog keeps live entitlement list autho
   assert.equal(enriched[0]?.supportsVision, true);
 });
 
-test("codex.mergeCodexLiveModelsWithLocalCatalog auto-includes remote-only models", () => {
+test("codex.mergeCodexLiveModelsWithLocalCatalog merges capacity limits conservatively (smaller wins)", () => {
   const merged = mergeCodexLiveModelsWithLocalCatalog(
     [
       {
@@ -320,19 +399,25 @@ test("codex.mergeCodexLiveModelsWithLocalCatalog auto-includes remote-only model
         owned_by: "codex",
         apiFormat: "responses",
         supportedEndpoints: ["responses"],
-        inputTokenLimit: 999999,
+        inputTokenLimit: 272000,
         supportsVision: true,
+      },
+      {
+        id: "gpt-5.5",
+        name: "Live GPT 5.5",
+        inputTokenLimit: 300000,
       },
     ],
     [
       {
         id: "gpt-5.6-sol",
         name: "GPT 5.6 Sol",
-        contextLength: 500000,
+        contextLength: 372000,
         maxInputTokens: 372000,
         maxOutputTokens: 128000,
       },
-      { id: "gpt-5.6-sol-low", name: "GPT 5.6 Sol (Low)", contextLength: 500000 },
+      { id: "gpt-5.6-sol-low", name: "GPT 5.6 Sol (Low)", contextLength: 372000 },
+      { id: "gpt-5.5", name: "GPT 5.5", maxInputTokens: 272000 },
     ]
   );
 
@@ -341,10 +426,19 @@ test("codex.mergeCodexLiveModelsWithLocalCatalog auto-includes remote-only model
   assert.ok(ids.includes("gpt-5.6-sol"));
   assert.ok(ids.includes("gpt-5.6-sol-low"));
   const sol = merged.find((model) => model.id === "gpt-5.6-sol");
-  // Local catalog enriches known IDs; live fields win on overlap via merge order.
-  assert.equal(sol?.inputTokenLimit, 999999);
+  assert.equal(sol?.name, "Live Sol");
+  // Live (272000) is SMALLER than the pinned contract (372000) here — the
+  // smaller value wins so OmniRoute never promises more context than the
+  // live account can actually serve (#7012).
+  assert.equal(sol?.inputTokenLimit, 272000);
   assert.equal(sol?.supportsVision, true);
+  // Output limit is pinned-only (live has none) — passes through unchanged.
   assert.equal(sol?.outputTokenLimit, 128000);
+  assert.equal(
+    merged.find((model) => model.id === "gpt-5.5")?.inputTokenLimit,
+    272000,
+    "capacity limits merge conservatively for all Codex models, not only the pinned GPT-5.6 ids — the smaller of live (300000) vs. pinned (272000) wins"
+  );
 });
 
 test("codex discovery filters drop the GPT-5.4 family but keep other remote models", () => {

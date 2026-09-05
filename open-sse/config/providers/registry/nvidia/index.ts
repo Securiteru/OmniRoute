@@ -8,6 +8,7 @@ export const nvidiaProvider: RegistryEntry = {
   baseUrl: "https://integrate.api.nvidia.com/v1/chat/completions",
   authType: "apikey",
   authHeader: "bearer",
+  toolNameMaxLength: 64,
   // #6773: nvidia multiplexes 17 models from 9 different upstream vendors
   // (z-ai/, minimaxai/, deepseek-ai/, qwen/, mistralai/, stepfun-ai/,
   // moonshotai/, openai/, nvidia/) behind ONE connection — mark it passthrough
@@ -31,8 +32,6 @@ export const nvidiaProvider: RegistryEntry = {
     { id: "qwen/qwen3.5-122b-a10b", name: "Qwen3.5-122B-A10B" },
     { id: "stepfun-ai/step-3.5-flash", name: "Step 3.5 Flash" },
     { id: "stepfun-ai/step-3.7-flash", name: "Step 3.7 Flash" },
-    { id: "deepseek-ai/deepseek-v4-pro", name: "DeepSeek V4 Pro", supportsReasoning: true },
-    { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash", supportsReasoning: true },
     // Sweep 2026-06-19: verified present in the live NVIDIA NIM /v1/models catalog.
     { id: "moonshotai/kimi-k2.6", name: "Kimi K2.6" },
     { id: "openai/gpt-oss-120b", name: "GPT OSS 120B", toolCalling: false },
@@ -49,21 +48,21 @@ export const nvidiaProvider: RegistryEntry = {
     { id: "abacusai/dracarys-llama-3.1-70b-instruct", name: "Dracarys Llama 3.1 70B Instruct" },
     { id: "google/gemma-2-2b-it", name: "Gemma 2 2B IT" },
     { id: "google/gemma-3n-e2b-it", name: "Gemma 3n E2B IT" },
-    { id: "meta/llama-3.1-8b-instruct", name: "Llama 3.1 8B Instruct" },
+    { id: "meta/llama-3.1-8b-instruct", name: "Llama 3.1 8B Instruct", toolCalling: false },
     {
       id: "meta/llama-3.2-11b-vision-instruct",
       name: "Llama 3.2 11B Vision Instruct",
       supportsVision: true,
     },
     { id: "meta/llama-3.2-1b-instruct", name: "Llama 3.2 1B Instruct" },
-    { id: "meta/llama-3.2-3b-instruct", name: "Llama 3.2 3B Instruct" },
+    { id: "meta/llama-3.2-3b-instruct", name: "Llama 3.2 3B Instruct", toolCalling: false },
     {
       id: "meta/llama-3.2-90b-vision-instruct",
       name: "Llama 3.2 90B Vision Instruct",
       supportsVision: true,
     },
     { id: "meta/llama-4-maverick-17b-128e-instruct", name: "Llama 4 Maverick 17B 128E Instruct" },
-    { id: "meta/llama-guard-4-12b", name: "Llama Guard 4 12B" },
+    { id: "meta/llama-guard-4-12b", name: "Llama Guard 4 12B", toolCalling: false },
     { id: "mistralai/ministral-14b-instruct-2512", name: "Ministral 14B Instruct 2512" },
     { id: "mistralai/mistral-medium-3.5-128b", name: "Mistral Medium 3.5 128B" },
     { id: "mistralai/mistral-nemotron", name: "Mistral Nemotron" },

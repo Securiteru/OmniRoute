@@ -19,6 +19,7 @@ const core = await import("../../src/lib/db/core.ts");
 const providersDb = await import("../../src/lib/db/providers.ts");
 const providerModelsRoute = await import("../../src/app/api/providers/[id]/models/route.ts");
 const outboundUrlGuard = await import("../../src/shared/network/outboundUrlGuard.ts");
+const outboundUrlGuardPolicy = await import("../../src/shared/network/outboundUrlGuardPolicy.ts");
 
 const originalFetch = globalThis.fetch;
 const originalAllowPrivateProviderUrls = process.env.OMNIROUTE_ALLOW_PRIVATE_PROVIDER_URLS;
@@ -77,7 +78,7 @@ test("#6939: getProviderOutboundGuard() and getProviderValidationGuard() agree f
   delete process.env.OMNIROUTE_ALLOW_LOCAL_PROVIDER_URLS;
   delete process.env.OMNIROUTE_ALLOW_PRIVATE_PROVIDER_URLS;
 
-  const validationGuard = outboundUrlGuard.getProviderValidationGuard();
+  const validationGuard = outboundUrlGuardPolicy.getProviderValidationGuard();
   assert.equal(validationGuard, "block-metadata");
 
   // The models route must resolve a guard for LAN-local model discovery that is at least as
@@ -94,7 +95,7 @@ test("#6939: LM Studio (LAN host, local OpenAI-compatible provider) model-list f
   delete process.env.OMNIROUTE_ALLOW_PRIVATE_PROVIDER_URLS;
 
   const connection = await seedConnection("lm-studio", {
-    providerSpecificData: { baseUrl: "http://192.168.1.50:1234/v1" },
+    providerSpecificData: { baseUrl: "http://192.168.1.50:1234/v1", autoFetchModels: true },
   });
 
   let fetchCalled = false;
@@ -125,7 +126,7 @@ test("#6939: LAN model-list fetch is still blocked when the local-first default 
   process.env.OMNIROUTE_ALLOW_LOCAL_PROVIDER_URLS = "false";
 
   const connection = await seedConnection("lm-studio", {
-    providerSpecificData: { baseUrl: "http://192.168.1.50:1234/v1" },
+    providerSpecificData: { baseUrl: "http://192.168.1.50:1234/v1", autoFetchModels: true },
   });
 
   let fetchCalled = false;
