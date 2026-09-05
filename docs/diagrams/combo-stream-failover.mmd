@@ -1,0 +1,17 @@
+%% Combo streaming quality validation and priority failover
+%% Reflects: open-sse/services/combo/validateQuality.ts
+flowchart TB
+  Client["Agent client"] --> Route["Chat completions route"]
+  Route --> Combo["Priority combo router"]
+  Combo --> Probe["SSE quality probe"]
+  Probe --> Shape["OpenAI choices payload"]
+  Shape --> Text["Plain text delta"]
+  Shape --> Tool["Tool-call delta"]
+  Text --> TextOk["Existing bounded success"]
+  Tool --> Terminal{"finish_reason present?"}
+  Terminal -->|yes| Valid["Forward valid stream"]
+  Terminal -->|no, stream closes| Invalid["Mark invalid"]
+  Invalid --> Advance["Advance to next target"]
+  Advance --> Luna["Luna-stage target"]
+  Luna --> Valid
+  TextOk --> Valid
