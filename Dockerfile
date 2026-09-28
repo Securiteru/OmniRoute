@@ -371,4 +371,17 @@ RUN --mount=type=cache,id=s/92ca8a61-c1ba-421f-a389-d48ac7258c2d-npm-cache,targe
     droid@0.212.0 \
     openclaw@2026.9.1
 
+# Devin CLI (devin-cli provider executor) and Cursor Agent (cursor detection/
+# diagnostics) are installer-script binaries, not npm packages. Install as root
+# and expose the binaries on PATH for the `node` runtime user. Auth stays
+# per-connection (WINDSURF_API_KEY / Cursor credentials) — no baked secrets.
+RUN curl -fsSL https://cli.devin.ai/install.sh -o /tmp/devin-install.sh \
+  && bash /tmp/devin-install.sh \
+  && cp -L "$(find /root/.local/bin /root/.local/share/devin -name devin | head -1)" /usr/local/bin/devin \
+  && rm -f /tmp/devin-install.sh \
+  && curl -fsSL https://cursor.com/install -o /tmp/cursor-install.sh \
+  && bash /tmp/cursor-install.sh \
+  && (cp "$(find /root/.local/bin /root/.cursor -name 'cursor-agent' -type f 2>/dev/null | head -1)" /usr/local/bin/cursor-agent || true) \
+  && rm -f /tmp/cursor-install.sh
+
 USER node

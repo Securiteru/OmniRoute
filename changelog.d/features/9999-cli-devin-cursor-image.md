@@ -1,0 +1,1 @@
+- **feat(build):** runner-cli image now ships the Devin CLI (`devin`) and Cursor Agent (`cursor-agent`) binaries alongside codex/claude/droid/openclaw, so the `devin-cli` executor and Cursor agent detection work inside the container — thanks @Securiteru
