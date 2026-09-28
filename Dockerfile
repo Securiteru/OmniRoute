@@ -375,7 +375,11 @@ RUN --mount=type=cache,id=s/92ca8a61-c1ba-421f-a389-d48ac7258c2d-npm-cache,targe
 # diagnostics) are installer-script binaries, not npm packages. Install as root
 # and expose the binaries on PATH for the `node` runtime user. Auth stays
 # per-connection (WINDSURF_API_KEY / Cursor credentials) — no baked secrets.
-RUN curl -fsSL https://cli.devin.ai/install.sh -o /tmp/devin-install.sh \
+RUN --mount=type=cache,id=s/92ca8a61-c1ba-421f-a389-d48ac7258c2d-apt-cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,id=s/92ca8a61-c1ba-421f-a389-d48ac7258c2d-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+  apt-get update \
+  && apt-get install -y --no-install-recommends curl \
+  && curl -fsSL https://cli.devin.ai/install.sh -o /tmp/devin-install.sh \
   && bash /tmp/devin-install.sh \
   && cp -L "$(find /root/.local/bin /root/.local/share/devin -name devin | head -1)" /usr/local/bin/devin \
   && rm -f /tmp/devin-install.sh \
