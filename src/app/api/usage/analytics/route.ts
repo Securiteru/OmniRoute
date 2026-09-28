@@ -24,6 +24,7 @@ import {
 } from "@/lib/db/usageAnalytics";
 import { getFallbackStats, getErrorTypeBreakdown } from "@/lib/db/callLogStats";
 import { buildByProviderRows } from "@/lib/usage/providerDisplayNames";
+import { isFlatRateProvider } from "@/lib/usage/flatRateProviders";
 import { toNumber } from "@/shared/utils/numeric";
 
 function getRangeStartIso(range: string): string | null {
@@ -241,12 +242,23 @@ function computeUsageRowCost(
   pricingByProvider: PricingByProvider,
   providerAliasMap: Record<string, string>,
   normalizeModelName: (model: string) => string,
-  computeCostFromPricing: ComputeCostFromPricing
+  computeCostFromPricing: ComputeCostFromPricing,
+  flatRateAsZero = true
 ): number {
   const provider = toStringValue(row.provider);
   const model = toStringValue(row.model);
   if (!provider || !model) return 0;
   const serviceTier = normalizeServiceTier(row.serviceTier ?? row.service_tier);
+  const isAggregated = toNumber(row.isAggregated ?? row.is_aggregated) > 0;
+  const storedCost = toNumber(row.storedCost ?? row.stored_cost);
+
+  if (isAggregated) {
+    if (flatRateAsZero && isFlatRateProvider(provider)) return 0;
+    // New rollups preserve the exact API-equivalent value calculated before
+    // cache/reasoning token dimensions are discarded. Legacy zero-cost rows
+    // fall through to the best available input/output-token estimate.
+    if (storedCost > 0) return storedCost;
+  }
 
   const pricing = resolveModelPricing(
     pricingByProvider,
@@ -288,14 +300,24 @@ function computeUsageRowStandardCost(
   pricingByProvider: PricingByProvider,
   providerAliasMap: Record<string, string>,
   normalizeModelName: (model: string) => string,
-  computeCostFromPricing: ComputeCostFromPricing
+  computeCostFromPricing: ComputeCostFromPricing,
+  flatRateAsZero = true
 ): number {
   return computeUsageRowCost(
-    { ...row, serviceTier: "standard", service_tier: "standard" },
+    {
+      ...row,
+      serviceTier: "standard",
+      service_tier: "standard",
+      storedCost: 0,
+      stored_cost: 0,
+      isAggregated: 0,
+      is_aggregated: 0,
+    },
     pricingByProvider,
     providerAliasMap,
     normalizeModelName,
-    computeCostFromPricing
+    computeCostFromPricing,
+    flatRateAsZero
   );
 }
 
@@ -344,6 +366,10 @@ export async function GET(request: Request) {
     const endDate = searchParams.get("endDate") || undefined;
     const apiKeyIdsParam = searchParams.get("apiKeyIds") || "";
     const apiKeyIds = apiKeyIdsParam ? apiKeyIdsParam.split(",").filter(Boolean) : [];
+    // Flat-rate subscriptions are $0 in billed-cost analytics by default. The
+    // dedicated costs page opts into their token-price equivalent so subscription
+    // consumption can be compared with metered providers without changing budgets.
+    const includeFlatRateEstimates = searchParams.get("includeFlatRateEstimates") === "true";
 
     const sinceIso = startDate || getRangeStartIso(range);
     const untilIso = endDate || null;
@@ -561,7 +587,8 @@ export async function GET(request: Request) {
         pricingByProvider,
         PROVIDER_ID_TO_ALIAS,
         normalizeModelName,
-        computeCostFromPricing
+        computeCostFromPricing,
+        !includeFlatRateEstimates
       );
       dailyCostByDate.set(date, (dailyCostByDate.get(date) || 0) + cost);
 
@@ -599,7 +626,8 @@ export async function GET(request: Request) {
         pricingByProvider,
         PROVIDER_ID_TO_ALIAS,
         normalizeModelName,
-        computeCostFromPricing
+        computeCostFromPricing,
+        !includeFlatRateEstimates
       );
       // Keyed by model name alone (not provider) — the table renders one row per
       // model, so the same model served via multiple provider connections/accounts
@@ -670,7 +698,8 @@ export async function GET(request: Request) {
         pricingByProvider,
         PROVIDER_ID_TO_ALIAS,
         normalizeModelName,
-        computeCostFromPricing
+        computeCostFromPricing,
+        !includeFlatRateEstimates
       );
       providerCostByProvider.set(provider, (providerCostByProvider.get(provider) || 0) + cost);
     }
@@ -685,7 +714,8 @@ export async function GET(request: Request) {
         pricingByProvider,
         PROVIDER_ID_TO_ALIAS,
         normalizeModelName,
-        computeCostFromPricing
+        computeCostFromPricing,
+        !includeFlatRateEstimates
       );
       accountCostByAccount.set(accountKey, (accountCostByAccount.get(accountKey) || 0) + cost);
     }
@@ -747,7 +777,8 @@ export async function GET(request: Request) {
         pricingByProvider,
         PROVIDER_ID_TO_ALIAS,
         normalizeModelName,
-        computeCostFromPricing
+        computeCostFromPricing,
+        !includeFlatRateEstimates
       );
       apiKeyMap.set(key, existing);
     }
@@ -791,7 +822,8 @@ export async function GET(request: Request) {
         pricingByProvider,
         PROVIDER_ID_TO_ALIAS,
         normalizeModelName,
-        computeCostFromPricing
+        computeCostFromPricing,
+        !includeFlatRateEstimates
       );
       existing.cost += actualCost;
       if (serviceTier === "flex") {
@@ -800,7 +832,8 @@ export async function GET(request: Request) {
           pricingByProvider,
           PROVIDER_ID_TO_ALIAS,
           normalizeModelName,
-          computeCostFromPricing
+          computeCostFromPricing,
+          !includeFlatRateEstimates
         );
         existing.savings += Math.max(0, standardCost - actualCost);
         existing.usageSavingsTokens += computeUsageSavingsTokens(
@@ -860,10 +893,15 @@ export async function GET(request: Request) {
       }
     }
 
+    const modelNames = Array.from(allModels);
     const dailyByModel = Object.keys(dailyByModelMap)
       .sort()
-      .map((date) => ({ date, ...dailyByModelMap[date] }));
-    const modelNames = Array.from(allModels);
+      .map((date) => ({
+        date,
+        ...Object.fromEntries(
+          modelNames.map((model) => [model, dailyByModelMap[date][model] || 0])
+        ),
+      }));
 
     const analytics = {
       summary,
@@ -881,6 +919,7 @@ export async function GET(request: Request) {
       modelNames,
       errorBreakdown,
       range,
+      includesFlatRateEstimates: includeFlatRateEstimates,
     } as any;
 
     if (presetsParam) {
@@ -917,7 +956,8 @@ export async function GET(request: Request) {
             pricingByProvider,
             PROVIDER_ID_TO_ALIAS,
             normalizeModelName,
-            computeCostFromPricing
+            computeCostFromPricing,
+            !includeFlatRateEstimates
           );
         }
 

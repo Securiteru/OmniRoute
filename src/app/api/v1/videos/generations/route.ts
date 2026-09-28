@@ -51,18 +51,6 @@ export async function GET(request?: Request) {
 }
 
 /**
- * #6928: best-effort per-connection base-URL override lookup for local no-auth
- * media providers (ComfyUI). Returns null instead of failing when no connection
- * exists — local providers must keep working with zero configuration.
- */
-async function resolveLocalOverrideCredentials(provider) {
-  const localCredentials = await getProviderCredentialsWithQuotaPreflight(provider);
-  return localCredentials && !isAllRateLimitedCredentials(localCredentials)
-    ? localCredentials
-    : null;
-}
-
-/**
  * POST /v1/videos/generations — generate videos
  */
 async function postHandler(request, context) {
