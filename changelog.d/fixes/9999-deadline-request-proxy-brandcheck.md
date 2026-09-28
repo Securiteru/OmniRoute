@@ -1,0 +1,1 @@
+- **fix(sse):** `withDeadlineSignal` rebuilds the request from primitives when `new Request(request)` brand-checks fail on Next.js tracked-request proxies (`Cannot read private member #state`), which 500'd every /v1 chat/completions, responses and messages call under `output: "standalone"` on Node 26 — thanks @Securiteru
