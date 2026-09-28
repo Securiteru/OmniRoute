@@ -380,7 +380,7 @@ RUN --mount=type=cache,id=s/92ca8a61-c1ba-421f-a389-d48ac7258c2d-apt-cache,targe
   apt-get update \
   && apt-get install -y --no-install-recommends curl \
   && curl -fsSL https://cli.devin.ai/install.sh -o /tmp/devin-install.sh \
-  && bash /tmp/devin-install.sh \
+  && (bash /tmp/devin-install.sh || true) \
   && cp -L "$(find /root/.local/bin /root/.local/share/devin -name devin | head -1)" /usr/local/bin/devin \
   && rm -f /tmp/devin-install.sh \
   && curl -fsSL https://cursor.com/install -o /tmp/cursor-install.sh \
