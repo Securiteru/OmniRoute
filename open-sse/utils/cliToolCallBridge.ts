@@ -59,14 +59,24 @@ export function parseToolCallResponse(
   // tolerate ```json fences and surrounding prose
   const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fence) candidates.push(fence[1].trim());
-  const brace = trimmed.match(/\{[\s\S]*"tool_calls"[\s\S]*\}/);
+  const brace = trimmed.match(/\{[\s\S]*"[\w-]*calls?"[\s\S]*\}/);
   if (brace) candidates.push(brace[0]);
 
   for (const c of candidates) {
     try {
-      const obj = JSON.parse(c) as { tool_calls?: ParsedToolCall[] };
-      if (Array.isArray(obj?.tool_calls) && obj.tool_calls.length > 0) {
-        return obj.tool_calls
+      const obj = JSON.parse(c) as Record<string, unknown>;
+      // Accept "tool_calls" plus fuzzy variants — some CLI models corrupt the
+      // literal key (e.g. emitting "olsertslls" instead of "tool_calls").
+      const calls = Object.values(obj ?? {}).find(
+        (v): v is ParsedToolCall[] =>
+          Array.isArray(v) &&
+          v.length > 0 &&
+          v.every(
+            (i) => typeof (i as ParsedToolCall)?.name === "string" && (i as ParsedToolCall).name
+          )
+      );
+      if (calls) {
+        return calls
           .filter((t) => typeof t.name === "string" && t.name)
           .map((t) => ({
             name: t.name as string,
