@@ -291,7 +291,6 @@ export class DroidExecutor extends BaseExecutor {
               sendRpc("session/new", {
                 cwd: process.cwd(),
                 mcpServers: [],
-                model: model || undefined,
               });
               continue;
             }
