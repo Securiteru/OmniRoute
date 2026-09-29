@@ -229,10 +229,13 @@ export class CursorCliExecutor extends BaseExecutor {
             if (type === "assistant") {
               const content = (ev.message as Record<string, unknown> | undefined)?.content;
               if (Array.isArray(content)) {
-                for (const part of content) {
-                  const t = (part as Record<string, unknown>)?.text;
-                  if (typeof t === "string" && t) emitDelta(t);
-                }
+                // --stream-partial-output sends cumulative snapshots, not
+                // deltas — emit only the suffix beyond what we already sent.
+                const snap = content
+                  .map((part) => (part as Record<string, unknown>)?.text)
+                  .filter((t): t is string => typeof t === "string")
+                  .join("");
+                if (snap.length > totalText.length) emitDelta(snap.slice(totalText.length));
               }
             } else if (type === "result") {
               const r = ev.result;
