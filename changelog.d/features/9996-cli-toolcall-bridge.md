@@ -1,0 +1,1 @@
+Add OpenAI `tools`/`tool_calls` support to the CLI executors (droid, cursor-cli, devin-cli) via a prompt-injected tool-schema contract and JSON response parsing; auto-deny ACP permission requests and add a 120s watchdog so agentic CLIs can't stall waiting for approval.

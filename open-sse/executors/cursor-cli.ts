@@ -21,7 +21,9 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { BaseExecutor, type ExecuteInput } from "./base.ts";
+import type { OpenAITool } from "../utils/cliToolCallBridge.ts";
 import { safeKillWithGroup } from "../utils/safeKill.ts";
+import { buildToolPromptSuffix, parseToolCallResponse } from "../utils/cliToolCallBridge.ts";
 
 function resolveCursorBin(): string {
   const envBin = process.env.CLI_CURSOR_BIN?.trim();
@@ -83,7 +85,10 @@ export class CursorCliExecutor extends BaseExecutor {
   }> {
     const b = (body ?? {}) as Record<string, unknown>;
     const messages: OpenAIMsg[] = Array.isArray(b.messages) ? (b.messages as OpenAIMsg[]) : [];
-    const promptText = buildPromptText(messages);
+    const tools = Array.isArray(b.tools) ? (b.tools as OpenAITool[]) : [];
+    const hasTools = tools.length > 0;
+    const promptText =
+      buildPromptText(messages) + (hasTools ? buildToolPromptSuffix(tools, b.tool_choice) : "");
     const apiKey =
       credentials.apiKey || credentials.accessToken || process.env.CURSOR_API_KEY || "";
     const cursorBin = resolveCursorBin();
@@ -142,6 +147,60 @@ export class CursorCliExecutor extends BaseExecutor {
           if (error) {
             emit(`data: ${JSON.stringify({ error: { message: error, type: "cursor_cli_error" } })}\n\n`);
           } else {
+            const outText = totalText || resultText;
+            const calls = hasTools ? parseToolCallResponse(outText) : null;
+            if (calls) {
+              emit(
+                `data: ${JSON.stringify({
+                  id: responseId,
+                  object: "chat.completion.chunk",
+                  created,
+                  model,
+                  choices: [
+                    {
+                      index: 0,
+                      delta: {
+                        role: "assistant",
+                        tool_calls: calls.map((c, i) => ({
+                          index: i,
+                          id: `call_${Date.now()}_${i}`,
+                          type: "function",
+                          function: { name: c.name, arguments: JSON.stringify(c.arguments) },
+                        })),
+                      },
+                      finish_reason: "tool_calls",
+                    },
+                  ],
+                  usage: {
+                    prompt_tokens: Math.ceil(promptText.length / 4),
+                    completion_tokens: Math.ceil(outText.length / 4),
+                    total_tokens: Math.ceil((promptText.length + outText.length) / 4),
+                    estimated: true,
+                  },
+                })}\n\n`
+              );
+              emit("data: [DONE]\n\n");
+              safeKill("SIGTERM");
+              const killTimer = setTimeout(() => safeKill("SIGKILL", true), 2000);
+              killTimer.unref?.();
+              controller.close();
+              return;
+            }
+            if (hasTools && outText && !roleEmitted) {
+              // Model answered in plain text despite tools — emit as normal message.
+              roleEmitted = true;
+              emit(
+                `data: ${JSON.stringify({
+                  id: responseId,
+                  object: "chat.completion.chunk",
+                  created,
+                  model,
+                  choices: [
+                    { index: 0, delta: { role: "assistant", content: outText }, finish_reason: null },
+                  ],
+                })}\n\n`
+              );
+            }
             emit(
               `data: ${JSON.stringify({
                 id: responseId,
@@ -167,6 +226,10 @@ export class CursorCliExecutor extends BaseExecutor {
 
         const emitDelta = (text: string) => {
           if (!text) return;
+          if (hasTools) {
+            totalText += text;
+            return;
+          }
           if (!roleEmitted) {
             emit(
               `data: ${JSON.stringify({

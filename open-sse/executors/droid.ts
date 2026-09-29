@@ -32,6 +32,11 @@ import os from "node:os";
 import fs from "node:fs";
 import { BaseExecutor, type ExecuteInput, type ProviderCredentials } from "./base.ts";
 import { safeKillWithGroup } from "../utils/safeKill.ts";
+import {
+  buildToolPromptSuffix,
+  parseToolCallResponse,
+  type OpenAITool,
+} from "../utils/cliToolCallBridge.ts";
 
 // ─── Binary discovery ────────────────────────────────────────────────────────
 
@@ -139,7 +144,10 @@ export class DroidExecutor extends BaseExecutor {
   }> {
     const b = (body ?? {}) as Record<string, unknown>;
     const messages: OpenAIMsg[] = Array.isArray(b.messages) ? (b.messages as OpenAIMsg[]) : [];
-    const promptText = buildPromptText(messages);
+    const tools = Array.isArray(b.tools) ? (b.tools as OpenAITool[]) : [];
+    const hasTools = tools.length > 0;
+    const promptText =
+      buildPromptText(messages) + (hasTools ? buildToolPromptSuffix(tools, b.tool_choice) : "");
     const apiKey =
       credentials.apiKey || credentials.accessToken || process.env.FACTORY_API_KEY || "";
     const droidBin = resolveDroidBin();
@@ -174,6 +182,11 @@ export class DroidExecutor extends BaseExecutor {
 
         let spawnError: Error | null = null;
         let stdinClosed = false;
+
+        const watchdog = setTimeout(() => {
+          finish("Droid (Factory) CLI timed out waiting for the agent");
+        }, 120000);
+        watchdog.unref?.();
 
         child.on("error", (err) => {
           spawnError = err;
@@ -219,10 +232,69 @@ export class DroidExecutor extends BaseExecutor {
         const finish = (error?: string) => {
           if (finished) return;
           finished = true;
+          clearTimeout(watchdog);
 
           if (error) {
             emit(
               `data: ${JSON.stringify({ error: { message: error, type: "droid_error" } })}\n\n`
+            );
+          } else if (hasTools) {
+            const calls = parseToolCallResponse(totalText);
+            if (calls) {
+              emit(
+                `data: ${JSON.stringify({
+                  id: responseId,
+                  object: "chat.completion.chunk",
+                  created,
+                  model,
+                  choices: [
+                    {
+                      index: 0,
+                      delta: {
+                        role: "assistant",
+                        tool_calls: calls.map((c, i) => ({
+                          index: i,
+                          id: `call_${Date.now()}_${i}`,
+                          type: "function",
+                          function: { name: c.name, arguments: JSON.stringify(c.arguments) },
+                        })),
+                      },
+                      finish_reason: "tool_calls",
+                    },
+                  ],
+                })}\n\n`
+              );
+            } else if (totalText) {
+              emit(
+                `data: ${JSON.stringify({
+                  id: responseId,
+                  object: "chat.completion.chunk",
+                  created,
+                  model,
+                  choices: [
+                    {
+                      index: 0,
+                      delta: { role: "assistant", content: totalText },
+                      finish_reason: null,
+                    },
+                  ],
+                })}\n\n`
+              );
+            }
+            emit(
+              `data: ${JSON.stringify({
+                id: responseId,
+                object: "chat.completion.chunk",
+                created,
+                model,
+                choices: [{ index: 0, delta: {}, finish_reason: calls ? "tool_calls" : "stop" }],
+                usage: {
+                  prompt_tokens: Math.ceil(promptText.length / 4),
+                  completion_tokens: Math.ceil(totalText.length / 4),
+                  total_tokens: Math.ceil((promptText.length + totalText.length) / 4),
+                  estimated: true,
+                },
+              })}\n\n`
             );
           } else {
             // Emit finish chunk
@@ -320,6 +392,32 @@ export class DroidExecutor extends BaseExecutor {
             // used to hang the request until the client timed out, so the final
             // result is handled by the branch further down instead.
 
+            // ── Agent→client requests (permissions, etc.) — auto-deny ────
+            if (msg.method && msg.id !== undefined) {
+              try {
+                if (msg.method === "session/request_permission") {
+                  child.stdin.write(
+                    JSON.stringify({
+                      jsonrpc: "2.0",
+                      id: msg.id,
+                      result: { outcome: { outcome: "cancelled" } },
+                    }) + "\n"
+                  );
+                } else {
+                  child.stdin.write(
+                    JSON.stringify({
+                      jsonrpc: "2.0",
+                      id: msg.id,
+                      error: { code: -32601, message: "unsupported" },
+                    }) + "\n"
+                  );
+                }
+              } catch {
+                /* stdin closed */
+              }
+              continue;
+            }
+
             // ── Streaming notifications (session/update) ──────────────────
             if (msg.method === "session/update" || msg.method === "$/update") {
               const params = msg.params as Record<string, unknown> | undefined;
@@ -355,6 +453,7 @@ export class DroidExecutor extends BaseExecutor {
                     roleEmitted = true;
                   }
                   totalText += delta;
+                  if (!hasTools)
                   emit(
                     `data: ${JSON.stringify({
                       id: responseId,
@@ -395,6 +494,7 @@ export class DroidExecutor extends BaseExecutor {
                     roleEmitted = true;
                   }
                   totalText += delta;
+                  if (!hasTools)
                   emit(
                     `data: ${JSON.stringify({
                       id: responseId,
