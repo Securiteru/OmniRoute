@@ -98,7 +98,15 @@ export class CursorCliExecutor extends BaseExecutor {
         const env: NodeJS.ProcessEnv = { ...process.env };
         if (apiKey) env.CURSOR_API_KEY = apiKey;
 
-        const args = ["-p", "--output-format", "stream-json", "--stream-partial-output"];
+        const args = [
+          "-p",
+          "--output-format",
+          "stream-json",
+          "--stream-partial-output",
+          "--trust",
+          "--mode",
+          "ask",
+        ];
         if (model) args.push("--model", model);
         args.push("--", promptText);
 
