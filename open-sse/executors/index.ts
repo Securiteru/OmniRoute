@@ -99,6 +99,7 @@ const lazyExecutors: Record<string, () => Promise<BaseExecutor>> = {
   "zed-hosted": () => import("./zed-hosted.ts").then((m) => new m.ZedHostedExecutor()),
   "devin-cli": () => import("./devin-cli.ts").then((m) => new m.DevinCliExecutor()),
   droid: () => import("./droid.ts").then((m) => new m.DroidExecutor()),
+  "cursor-cli": () => import("./cursor-cli.ts").then((m) => new m.CursorCliExecutor()),
   zcode: () => import("./zcode.ts").then((m) => new m.ZcodeExecutor()),
   zc: () => import("./zcode.ts").then((m) => new m.ZcodeExecutor()), // Alias
   "devin-cli-agentic": () =>

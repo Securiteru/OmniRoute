@@ -1,0 +1,1 @@
+Add `cursor-cli` as a standard provider backed by the Cursor Agent binary (`cursor-agent -p --output-format stream-json`), with safe-kill process cleanup and `CURSOR_API_KEY`/connection-key auth; fix the Dockerfile to install the full cursor-agent version directory so the shim resolves its chunks.

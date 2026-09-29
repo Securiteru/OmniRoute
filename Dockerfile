@@ -385,7 +385,9 @@ RUN --mount=type=cache,id=s/92ca8a61-c1ba-421f-a389-d48ac7258c2d-apt-cache,targe
   && rm -f /tmp/devin-install.sh \
   && curl -fsSL https://cursor.com/install -o /tmp/cursor-install.sh \
   && bash /tmp/cursor-install.sh \
-  && (cp -L "$(find /root/.local/bin /root/.cursor -name 'cursor-agent' 2>/dev/null | head -1)" /usr/local/bin/cursor-agent || true) \
+  && (vdir="$(find /root/.local/share/cursor-agent/versions -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)" \
+      && mkdir -p /opt/cursor-agent && cp -a "$vdir/." /opt/cursor-agent/ \
+      && ln -sf /opt/cursor-agent/cursor-agent /usr/local/bin/cursor-agent || true) \
   && rm -f /tmp/cursor-install.sh
 
 USER node
