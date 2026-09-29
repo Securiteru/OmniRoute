@@ -61,20 +61,24 @@ export function parseToolCallResponse(
   if (fence) candidates.push(fence[1].trim());
   const brace = trimmed.match(/\{[\s\S]*"[\w-]*calls?"[\s\S]*\}/);
   if (brace) candidates.push(brace[0]);
+  // last resort: grab the bare array after a *calls-ish key, even if the
+  // opening brace is corrupted (some models emit `nserts"tool_calls":[...]`).
+  const arr = trimmed.match(/"[\w-]*calls?"\s*:\s*(\[[\s\S]*?\])/);
+  if (arr) candidates.push(arr[1]);
 
   for (const c of candidates) {
     try {
-      const obj = JSON.parse(c) as Record<string, unknown>;
+      const parsed = JSON.parse(c) as Record<string, unknown> | ParsedToolCall[];
+      const isCallArr = (v: unknown): v is ParsedToolCall[] =>
+        Array.isArray(v) &&
+        v.length > 0 &&
+        v.every((i) => typeof (i as ParsedToolCall)?.name === "string" && (i as ParsedToolCall).name);
+      const obj = isCallArr(parsed)
+        ? { tool_calls: parsed }
+        : (parsed as Record<string, unknown>);
       // Accept "tool_calls" plus fuzzy variants — some CLI models corrupt the
       // literal key (e.g. emitting "olsertslls" instead of "tool_calls").
-      const calls = Object.values(obj ?? {}).find(
-        (v): v is ParsedToolCall[] =>
-          Array.isArray(v) &&
-          v.length > 0 &&
-          v.every(
-            (i) => typeof (i as ParsedToolCall)?.name === "string" && (i as ParsedToolCall).name
-          )
-      );
+      const calls = Object.values(obj ?? {}).find(isCallArr);
       if (calls) {
         return calls
           .filter((t) => typeof t.name === "string" && t.name)
