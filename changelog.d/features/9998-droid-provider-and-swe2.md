@@ -1,0 +1,1 @@
+Add Factory Droid as a first-class provider (spawns `droid exec --output-format acp`, reusing the ACP-over-stdio executor pattern with process-group safe-kill) and register the custom `swe-2` model for Devin CLI.
