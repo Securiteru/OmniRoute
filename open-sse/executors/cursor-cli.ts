@@ -2,7 +2,7 @@
  * CursorCliExecutor — routes completions through the Cursor Agent CLI binary
  * (`cursor-agent`) in non-interactive print mode with stream-json output.
  *
- *   cursor-agent -p --output-format stream-json --stream-partial-output \
+ *   cursor-agent -p --output-format stream-json \
  *     --model <model> --force <prompt>
  *
  * NDJSON events on stdout:
@@ -107,7 +107,6 @@ export class CursorCliExecutor extends BaseExecutor {
           "-p",
           "--output-format",
           "stream-json",
-          "--stream-partial-output",
           "--trust",
           "--mode",
           "ask",
@@ -292,8 +291,8 @@ export class CursorCliExecutor extends BaseExecutor {
             if (type === "assistant") {
               const content = (ev.message as Record<string, unknown> | undefined)?.content;
               if (Array.isArray(content)) {
-                // --stream-partial-output sends cumulative snapshots, not
-                // deltas — emit only the suffix beyond what we already sent.
+                // Each assistant event carries the full message text; emit
+                // only the suffix beyond what we already sent.
                 const snap = content
                   .map((part) => (part as Record<string, unknown>)?.text)
                   .filter((t): t is string => typeof t === "string")
