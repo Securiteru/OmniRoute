@@ -351,6 +351,16 @@ Documentation must describe verified behavior, not plausible behavior.
 5. Register models in `open-sse/config/providerRegistry.ts`
 6. Write tests in `tests/unit/` (include the publicCreds shape assertion if you added a new embedded default)
 
+### CLI-agent providers (fork addition: droid, devin-cli, cursor-cli)
+
+Executors spawn local agent CLIs and bridge to OpenAI SSE (`open-sse/executors/{droid,devin-cli,cursor-cli}.ts`). Gotchas learned live:
+
+- `cursor-agent --output-format stream-json` **without** `--stream-partial-output` emits full-message `assistant` events; WITH the flag it emits per-token *deltas*. Do not suffix-diff deltas as if they were cumulative snapshots — that corrupts output (`olsertslls`-class bugs). Inspect raw CLI stdout before blaming the model.
+- `droid` ACP: pass model via `--model` CLI flag (session/new rejects a `model` param, -32602) and initialize with `{protocolVersion: 1, clientCapabilities: {}}`.
+- Tool calls: these CLIs are text-only; `open-sse/utils/cliToolCallBridge.ts` inlines tool schemas into the prompt and parses `{"tool_calls":[...]}` back out. Answer agent→client permission requests (auto-deny) and keep the ~120s watchdog or the agent stalls and orphans a process.
+- Killing: always `safeKillWithGroup` (detached process group) — plain `child.kill` misses grandchildren.
+- Dashboard connection health-check is an HTTP probe and false-fails CLI providers (`503 Invalid outbound URL protocol`) — cosmetic, not a real outage.
+
 ### Adding a New API Route
 
 1. Create directory under `src/app/api/v1/your-route/`

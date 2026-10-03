@@ -1,0 +1,1 @@
+- **docs(agents):** document fork CLI-agent provider gotchas (cursor-agent stream-json delta semantics, droid ACP flags, tool-call bridge, safeKillWithGroup) in AGENTS.md — thanks @Securiteru
