@@ -411,7 +411,6 @@ export async function validateResponseQuality(
       hasMessageStop: false,
       stopReason: null,
     };
-    let anyContentFound = false;
     // #7285: OpenAI-shape lifecycle tracking, parallel to `sse` above.
     const openAi: OpenAiLifecycleFlags = { hasChoicePayload: false, hasTerminalMarker: false };
     // User log 1784230812441-bf3789: the previous `!sawAnyBytes` gate below let
