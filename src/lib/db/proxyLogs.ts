@@ -15,7 +15,8 @@
  */
 
 import { getDbInstance } from "./core";
-import { normalizeProxyHostForLog } from "../proxyLogger";
+import { normalizeProxyHostForLog } from "../proxyLogHost";
+import { sanitizeTimingMs } from "@omniroute/open-sse/utils/timingMs.ts";
 
 // ---------------------------------------------------------------------------
 // Queries
@@ -61,6 +62,9 @@ const PAGE_SIZE = 500;
  * `run`/`get`/`all` — no `.iterate()` cursor — so LIMIT/OFFSET batching is
  * the cursor-equivalent available without widening that shared interface
  * across all 4 driver adapters.
+ * This is a live, best-effort export, not a transactionally consistent snapshot:
+ * concurrent inserts/deletes can shift OFFSET pages and repeat or omit rows.
+ * The preflight COUNT is an estimate; the route reports its emitted count last.
  */
 export function* iterateProxyLogsSince(
   since: string,
@@ -300,6 +304,44 @@ export function getPoolEgressFailureBreakdown(
     unattributed,
     attributionNote: POOL_EGRESS_ATTRIBUTION_NOTE,
   };
+}
+
+/**
+ * Deferred per-attempt upstream timing patch. Rows are inserted with the
+ * first-chunk duration unknown on slow streams (NULL); the capture layer
+ * patches it once the first useful body byte arrives. Only non-negative
+ * integers are written - anything else is rejected (returns false) so
+ * partially migrated databases and clock skew never corrupt the row.
+ * Returns true when exactly one row was patched.
+ */
+export function updateAttemptTiming(
+  id: string,
+  patch: { headersMs?: number | null; firstChunkMs?: number | null }
+): boolean {
+  if (typeof id !== "string" || !id) return false;
+  const clean = {
+    headersMs: sanitizeTimingValue(patch.headersMs),
+    firstChunkMs: sanitizeTimingValue(patch.firstChunkMs),
+  };
+  if (clean.headersMs === undefined && clean.firstChunkMs === undefined) return false;
+  const db = getDbInstance();
+  const sets: string[] = [];
+  const params: Record<string, unknown> = { id };
+  if (clean.headersMs !== undefined) {
+    sets.push("headers_ms = @headersMs");
+    params.headersMs = clean.headersMs;
+  }
+  if (clean.firstChunkMs !== undefined) {
+    sets.push("first_chunk_ms = @firstChunkMs");
+    params.firstChunkMs = clean.firstChunkMs;
+  }
+  const result = db.prepare(`UPDATE proxy_logs SET ${sets.join(", ")} WHERE id = @id`).run(params);
+  return Number(result.changes) === 1;
+}
+
+// Undefined = column left untouched; an invalid value is never written.
+function sanitizeTimingValue(value: number | null | undefined): number | undefined {
+  return value === undefined ? undefined : (sanitizeTimingMs(value) ?? undefined);
 }
 
 /**
