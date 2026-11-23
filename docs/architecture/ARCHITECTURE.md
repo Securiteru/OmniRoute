@@ -17,13 +17,13 @@ It provides a single OpenAI-compatible endpoint (`/v1/*`) and routes traffic acr
 
 Core capabilities:
 
-- OpenAI-compatible API surface for CLI/tools (355 providers, 108 executors)
+- OpenAI-compatible API surface for CLI/tools (394 providers, 159 executor modules)
 - Request/response translation across provider formats
 - Model combo fallback (multi-model sequence)
 - Structured combo steps (`provider + model + connection`) with runtime ordering by `compositeTiers`
 - Account-level fallback (multi-account per provider)
 - Quota preflight and quota-aware P2C account selection in the main chat path
-- OAuth + API-key provider connection management (22 OAuth provider modules)
+- OAuth + API-key provider connection management (27 OAuth provider modules)
 - Embedding generation via `/v1/embeddings` (18 providers)
 - Image generation via `/v1/images/generations` (10+ providers, 20+ models)
 - Audio transcription via `/v1/audio/transcriptions` (18 providers)
@@ -153,6 +153,14 @@ Main pages under `src/app/(dashboard)/dashboard/`:
 - `/dashboard/usage` — per-request usage browser tied to `usage_history`
 - `/dashboard/compression` — compression analytics, statistics, and pipeline assignment
 - `/dashboard/api-manager` — API key lifecycle and model permissions
+
+UI layer: every page renders inside one shell — `src/app/(dashboard)/layout.tsx` →
+`src/shared/components/layouts/DashboardLayout.tsx` → `DashboardShell.tsx` (the kit's
+`SidebarProvider`/`SidebarInset`, OmniRoute's `Sidebar.tsx` and `Header.tsx`). Pages import their
+building blocks from `@/shared/components` (adapters over the vendored Keak CI UI Kit in
+`packages/ui-kit`) or from kit component subpaths (`@omniroute/ui-kit/table`, `…/page-header`), and
+icons through `<Icon>` (`ICON_MAP` → Lucide). Theme (`system` by default, light/dark) and tokens come
+from the kit via the bridge in `src/app/globals.css`. Details: `docs/architecture/DESIGN_SYSTEM.md`.
 
 ## High-Level System Context
 
@@ -310,9 +318,9 @@ Domain layer modules:
 
 - Cost rules/budgets: `src/domain/costRules.ts`
 - Fallback policy: `src/domain/fallbackPolicy.ts`
-- Combo resolver: `src/domain/comboResolver.ts`
+- Reserved combo-resolution contract: `src/domain/comboResolver.ts`; live routing uses `open-sse/services/combo.ts`
 - Lockout policy: `src/domain/lockoutPolicy.ts`
-- Policy engine: `src/domain/policyEngine.ts` — centralized lockout → budget → fallback evaluation
+- Reserved policy-evaluation contract: `src/domain/policyEngine.ts`; the request path enforces API-key policy through `src/shared/utils/apiKeyPolicy.ts` and resolved-target authorization through `src/sse/handlers/chat/resolvedModelPolicy.ts`
 - Error codes catalog: `src/shared/constants/errorCodes.ts`
 - Request ID: `src/shared/utils/requestId.ts`
 - Fetch timeout: `src/shared/utils/fetchTimeout.ts`
@@ -321,10 +329,11 @@ Domain layer modules:
 - Eval runner: `src/lib/evals/evalRunner.ts`
 - Domain state persistence: `src/lib/db/domainState.ts` — SQLite CRUD for fallback chains, budgets, cost history, lockout state, circuit breakers
 
-OAuth provider modules (22 individual files under `src/lib/oauth/providers/`):
+OAuth provider modules (27 individual files under `src/lib/oauth/providers/`):
 
 - Registry index: `src/lib/oauth/providers/index.ts`
-- Individual providers: `agy.ts`, `antigravity.ts`, `claude.ts`, `cline.ts`, `codebuddy-cn.ts`, `codex.ts`, `cursor.ts`, `devin-desktop.ts`, `ghe-copilot.ts`, `github.ts`, `gitlab-duo.ts`, `grok-cli-oauth.ts`, `grok-cli.ts`, `kilocode.ts`, `kimi-coding.ts`, `kiro.ts`, `openference.ts`, `qoder.ts`, `trae.ts`, `xai-oauth.ts`, `zed-hosted.ts`, `zed.ts`
+- Individual providers: `agy.ts`, `antigravity.ts`, `claude.ts`, `cline.ts`, `codebuddy-cn.ts`, `codebuddy-intl.ts`, `codex.ts`, `cursor.ts`, `devin-desktop.ts`, `ghe-copilot.ts`, `github.ts`, `gitlab-duo.ts`, `grok-cli-oauth.ts`, `grok-cli.ts`, `kilocode.ts`, `kimi-coding.ts`, `kiro.ts`, `muse-code.ts`, `openference.ts`, `qoder.ts`, `trae.ts`, `workbuddy.ts`, `xai-oauth.ts`, `zed-hosted.ts`, `zed.ts`
+- Shared helpers: `codebuddyDeviceAuth.ts` (CodeBuddy CN/intl device flow), `museCodeDeviceResponse.ts`
 - Thin wrapper: `src/lib/oauth/providers.ts` — re-exports from individual modules
 
 ## 5) Embedded Services (v3.8.4)
@@ -359,15 +368,16 @@ relying on a static combo definition. It powers the `auto/*` model prefix family
 
 - Engine entry: `open-sse/services/autoCombo/` (`autoComboEngine.ts`,
   `scoringEngine.ts`, `virtualFactory.ts`, `modePacks.ts`)
-- Resolver: `src/domain/comboResolver.ts` (auto-detection of `auto/` prefix)
+- Live combo entry: `open-sse/services/combo.ts` (`handleComboChat`, `resolveComboTargets`), called by `src/sse/handlers/chat.ts`
 - Dashboard: `/dashboard/auto-combo`
 - Telemetry: `auto_combo_decisions` SQLite table
 
 Key capabilities:
 
-- **19 routing strategies** (priority, weighted, fill-first, round-robin, P2C, random,
-  least-used, cost-optimized, reset-aware, reset-window, headroom, strict-random,
-  **auto**, lkgp, context-optimized, context-relay, **fusion**, plus a fallback path) —
+- **22 routing strategies** (priority, weighted, fill-first, round-robin, P2C, random,
+  least-used, cost-optimized, reset-aware, reset-window, expiry-first, headroom, quota-weighted,
+  strict-random, **auto**, lkgp, context-optimized, cache-optimized, context-relay, **fusion**,
+  pipeline, jev) —
   auto is the headline addition in v3.8.0; `fusion` (panel fan-out + judge synthesis,
   `open-sse/services/fusion.ts`) is new in v3.8.36.
 - **16-factor scoring**: quota, health, inverse cost, inverse latency, task fit and
@@ -421,21 +431,37 @@ For ruleset authoring and threshold tuning, see
 
 ### D. Domain Layer
 
-The `src/domain/` namespace centralizes policy decisions so route handlers do not
-have to assemble lockout/budget/fallback logic themselves.
+The `src/domain/` namespace contains domain services and reserved evaluation contracts.
+It is not one mandatory policy entry point for every request.
 
-- Policy engine: `src/domain/policyEngine.ts` — single entry point for
-  pre-execution evaluation (lockout → budget → fallback ordering)
+The live chat path calls `enforceApiKeyPolicy()` from
+`src/shared/utils/apiKeyPolicy.ts`; authorization of resolved models and combo members
+is implemented in `src/sse/handlers/chat/resolvedModelPolicy.ts`. The self-hosted
+entry in `src/app/api/v1/chat/completions/route.ts` also enforces API-key policy before
+dispatch. Combo resolution runs through `open-sse/services/combo.ts`.
+
+`src/domain/policyEngine.ts`, `src/domain/comboResolver.ts` and `src/lib/container.ts`
+remain tested contracts, not the wiring of that request path. The container registers
+the policy engine, but the inspected production request path does not resolve it.
+Changing those contracts alone does not change live chat policy or combo routing;
+connecting or removing them requires a separate design decision.
+
+- Reserved policy engine: `src/domain/policyEngine.ts` — lockout → budget → fallback evaluation
 - Cost rules: `src/domain/costRules.ts`
 - Fallback policy: `src/domain/fallbackPolicy.ts`
 - Lockout policy: `src/domain/lockoutPolicy.ts`
 - Tag-based routing: `src/domain/tagRouter.ts`
-- Combo resolver: `src/domain/comboResolver.ts` — resolves combo names, auto/\*
-  prefixes, and wildcard model targets to concrete execution plans
+- Reserved combo resolver: `src/domain/comboResolver.ts` — standalone selection contract; live combo routing is implemented in `open-sse/services/combo.ts`
 - Connection/model rule joiner: `src/domain/connectionModelRules.ts`
 - Model availability snapshots: `src/domain/modelAvailability.ts`
 - Provider expiration tracking: `src/domain/providerExpiration.ts`
-- Quota cache: `src/domain/quotaCache.ts`
+- Quota cache: `src/domain/quotaCache.ts`. Providers add and remove quota windows (OpenAI
+  dropped the 5-hour Codex window for some plans), so a usage reading the provider's adapter
+  attests as complete (`quotasComplete`, see `src/lib/usage/usageReading.ts`) is the account's
+  full window set: a window known earlier but absent from it is retired, in the cache, in the
+  `quota_snapshots` a restart rehydrates (an appended retirement record), in the persisted
+  Codex quota state and in Claude's saturation buckets. Partial evidence (response headers,
+  stale copies) only updates the windows it carries.
 - Degradation state: `src/domain/degradation.ts`
 - Configuration audit: `src/domain/configAudit.ts`
 - OmniRoute response metadata builder: `src/domain/omnirouteResponseMeta.ts`
@@ -486,6 +512,10 @@ the global circuit breaker / connection cooldown / model lockout layers:
   identity, scrubs response headers, drives credits/version tracking via
   `antigravityCredits.ts`, `antigravityHeaderScrub.ts`, `antigravityHeaders.ts`,
   `antigravityIdentity.ts`, `antigravityVersion.ts`)
+- Antigravity 429 guard: `open-sse/services/antigravity429Guard.ts` (per-request budget of
+  upstream 429s across all hosts, `ANTIGRAVITY_MAX_429_ATTEMPTS`; an identical re-send of a
+  refused body is answered locally; `src/sse/handlers/chat.ts` does not restart such a request
+  through the cooldown-aware retry)
 - ModelScope quota policy: `open-sse/services/modelscopePolicy.ts`
 - Claude Code CCH (Compatibility Channel Handshake): `open-sse/services/claudeCodeCCH.ts`,
   plus `claudeCodeCompatible.ts`, `claudeCodeConstraints.ts`, `claudeCodeExtraRemap.ts`,
@@ -545,6 +575,7 @@ Domain State DB (SQLite):
 - Runtime env validation: `src/lib/env/runtimeEnv.ts` — Zod schema for all environment variables, surfaced as startup errors/warnings
 - Sync tokens: `src/lib/db/syncTokens.ts` — scoped tokens for config bundle download endpoints; backed by `sync_tokens` SQLite table (migration `024_create_sync_tokens.sql`)
 - WebSocket handshake auth: `src/lib/ws/handshake.ts` — validates WS upgrade requests via API key or session cookie
+- Live dashboard WebSocket auth: `src/server/ws/liveServer.ts` — the sidecar (port `LIVE_WS_PORT`) accepts a dashboard session cookie or a Bearer API key holding a management scope (`manage`/`admin`); inference-only keys are refused. Its internal `POST /__omniroute_event` publisher endpoint accepts loopback peers only when no proxy-hop header (`x-forwarded-*`, `x-real-ip`, `forwarded`, `via`) is present
 
 ## 5) Cloud Sync
 
@@ -930,6 +961,22 @@ Each provider has a specialized executor extending `BaseExecutor` (in `open-sse/
 | `DevinDesktopExecutor`    | Devin Desktop                                                                                                                                               | Imported API key + Connect-protobuf chat streaming                   |
 
 All other providers (including custom compatible nodes) use the `DefaultExecutor`.
+
+### Automated probes and web-session accounts
+
+Model tests, Test All, combo tests and assessments send real chat requests. A web-session
+provider acts as the signed-in user, so each of those requests would be saved as a
+conversation on that account; automated probes that left such conversations got an account
+suspended (#14780). The chat pipeline therefore refuses every target an automated probe
+reaches whose provider takes a web-session credential, once the target's provider is
+resolved and before a credential is chosen (`src/lib/providers/chatProbePolicy.ts`). The
+refusal is `422` with `error.code` `chat_probe_not_isolated`, and the probe runners report
+it as a skip, not a failure.
+
+An executor that runs every chat in the provider's own no-history mode declares it with
+`ChatProbeIsolatingExecutor` (`open-sse/executors/chatProbeIsolation.ts`); probes to that
+provider are then allowed. ChatGPT Web declares `temporary-chat`. Pin a declaration to its
+mechanism with a test, so the claim cannot outlive the code that makes it true.
 
 ## Provider Compatibility Matrix
 

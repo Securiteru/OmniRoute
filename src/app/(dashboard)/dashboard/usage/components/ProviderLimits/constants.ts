@@ -1,4 +1,5 @@
 export const PROVIDER_LABEL: Record<string, string> = {
+  chatgpt: "ChatGPT",
   antigravity: "Antigravity",
   github: "GitHub Copilot",
   kiro: "Kiro AI",
@@ -10,10 +11,12 @@ export const PROVIDER_LABEL: Record<string, string> = {
   glmt: "GLM Thinking",
   "opencode-go": "OpenCode Go",
   "ollama-cloud": "Ollama Cloud",
+  moonshot: "Kimi",
   "kimi-coding": "Kimi Coding",
   minimax: "MiniMax",
   "minimax-cn": "MiniMax CN",
   nanogpt: "NanoGPT",
+  nan: "NaN.Builders",
   apmix: "Apmix",
   deepseek: "DeepSeek",
   "xai-oauth": "xAI OAuth (Grok)",

@@ -1,4 +1,6 @@
 import { SEARCH_PROVIDERS } from "../config/searchRegistry.ts";
+import { SearchProviderChatError } from "../utils/searchProviderChatError.ts";
+import { isDecisionsOnlyProvider } from "../config/decisionsProviders.ts";
 import { assertMicrosoftDesignerWebProviderAvailable } from "@/shared/constants/designerWebRetirement";
 import { assertRuntimeProviderAvailable } from "@/shared/constants/providerRetirement";
 import { assertCommonChatGptWebProviderAvailable } from "@/shared/constants/chatgptWebRetirement";
@@ -36,6 +38,7 @@ const lazyExecutors: Record<string, () => Promise<BaseExecutor>> = {
   "amazon-q": () => import("./kiro.ts").then((m) => new m.KiroExecutor("amazon-q")),
   bedrock: () => import("./bedrock.ts").then((m) => new m.BedrockExecutor()),
   codex: () => import("./codex.ts").then((m) => new m.CodexExecutor()),
+  chatgpt: () => import("./chatgpt.ts").then((m) => new m.ChatGptExecutor()),
   "codex-app-server": () =>
     Promise.all([import("./codex-app-server.ts"), import("./codex.ts")]).then(
       ([appServer, codex]) =>
@@ -65,6 +68,8 @@ const lazyExecutors: Record<string, () => Promise<BaseExecutor>> = {
   gitlab: () => import("./gitlab.ts").then((m) => new m.GitlabExecutor()),
   "gitlab-duo": () => import("./gitlab.ts").then((m) => new m.GitlabExecutor("gitlab-duo")),
   nlpcloud: () => import("./nlpcloud.ts").then((m) => new m.NlpCloudExecutor()),
+  replicate: () => import("./replicate.ts").then((m) => new m.ReplicateExecutor()),
+  cerebrium: () => import("./cerebrium.ts").then((m) => new m.CerebriumExecutor()),
   oneminai: () => import("./oneminai.ts").then((m) => new m.OneMinAiExecutor()),
   "1min": () => import("./oneminai.ts").then((m) => new m.OneMinAiExecutor()), // Alias
   pollinations: () => import("./pollinations.ts").then((m) => new m.PollinationsExecutor()),
@@ -75,7 +80,11 @@ const lazyExecutors: Record<string, () => Promise<BaseExecutor>> = {
   fb: () => import("./freebuff.ts").then((m) => new m.FreebuffExecutor()), // Alias
   "opencode-zen": () => import("./opencode.ts").then((m) => new m.OpencodeExecutor("opencode-zen")),
   "opencode-go": () => import("./opencode.ts").then((m) => new m.OpencodeExecutor("opencode-go")),
-  opencode: () => import("./opencode.ts").then((m) => new m.OpencodeExecutor("opencode-zen")), // Alias for opencode-zen
+  // Local headless server of the opencode CLI (`opencode serve`). Speaks
+  // session/parts, not the OpenAI wire format, so it needs its own executor;
+  // there is no OpenAI-compatible endpoint to point a generic node at.
+  "opencode-server": () =>
+    import("./opencodeServer.ts").then((m) => new m.OpencodeServerExecutor()),
   vertex: () => import("./vertex.ts").then((m) => new m.VertexExecutor()),
   "vertex-partner": () => import("./vertex.ts").then((m) => new m.VertexExecutor()),
   cliproxyapi: () => import("./cliproxyapi.ts").then((m) => new m.CliproxyapiExecutor()),
@@ -101,6 +110,8 @@ const lazyExecutors: Record<string, () => Promise<BaseExecutor>> = {
   droid: () => import("./droid.ts").then((m) => new m.DroidExecutor()),
   "cursor-cli": () => import("./cursor-cli.ts").then((m) => new m.CursorCliExecutor()),
   zcode: () => import("./zcode.ts").then((m) => new m.ZcodeExecutor()),
+  "minimax-code": () => import("./minimax-code.ts").then((m) => new m.MinimaxCodeExecutor()),
+  mmcode: () => import("./minimax-code.ts").then((m) => new m.MinimaxCodeExecutor()), // Alias
   zc: () => import("./zcode.ts").then((m) => new m.ZcodeExecutor()), // Alias
   "devin-cli-agentic": () =>
     import("./devin-cli-agentic.ts").then((m) => new m.DevinCliAgenticExecutor()),
@@ -170,6 +181,8 @@ const lazyExecutors: Record<string, () => Promise<BaseExecutor>> = {
   gc: () => import("./grok-cli.ts").then((m) => new m.GrokCliExecutor()), // Alias
   "codebuddy-cn": () => import("./codebuddy-cn.ts").then((m) => new m.CodeBuddyCnExecutor()),
   cbcn: () => import("./codebuddy-cn.ts").then((m) => new m.CodeBuddyCnExecutor()), // Alias for codebuddy-cn
+  "codebuddy-intl": () => import("./codebuddy-intl.ts").then((m) => new m.CodeBuddyIntlExecutor()),
+  cbai: () => import("./codebuddy-intl.ts").then((m) => new m.CodeBuddyIntlExecutor()), // Alias for codebuddy-intl
   "zenmux-free": () => import("./zenmux-free.ts").then((m) => new m.ZenmuxFreeExecutor()),
   "cloudflare-playground": () =>
     import("./cloudflare-playground.ts").then((m) => new m.CloudflarePlaygroundExecutor()),
@@ -238,8 +251,13 @@ export async function getExecutor(provider: string): Promise<BaseExecutor> {
     throw err;
   }
   if (CHAT_UNSUPPORTED_SEARCH_PROVIDERS.has(provider)) {
+    throw new SearchProviderChatError(provider);
+  }
+  // #14498 — decisions-only providers (TypeSafe Jev) register for credentials,
+  // pricing and discovery but have no chat shape; dispatch is POST /v1/systemone.
+  if (isDecisionsOnlyProvider(provider)) {
     const err = new Error(
-      `Provider "${provider}" is a search provider and does not support chat completions; use the /v1/search endpoint instead.`
+      `Provider "${provider}" is a System One decisions provider and does not support chat completions; use the /v1/systemone endpoint instead.`
     );
     (err as Error & { status?: number }).status = 400;
     throw err;

@@ -1,3 +1,6 @@
+import { getEmptyTurnDiagnostics, hasTrustedEmptyTurn } from "./emptyTurnPolicy.ts";
+import { createCompletionDrain } from "./streamCompletionDrain.ts";
+import { createClientTerminalWatcher } from "./streamTerminal.ts";
 import type { StreamControllerOptions } from "./streamControllerTypes.ts";
 import { trackPendingRequest } from "@/lib/usageDb";
 import { STREAM_ACTIVE_TIMEOUT_MS, STREAM_IDLE_TIMEOUT_MS } from "../config/constants.ts";
@@ -7,9 +10,12 @@ import { PENDING_REQUEST_CLEARED_MARKER } from "./stream.ts";
 import { createCompletedResponsesToolHandoffWatcher } from "./responsesToolHandoff.ts";
 import { createStreamContentWatcher, type StreamContentWatcher } from "./streamReadiness.ts";
 import { hasOpenReasoning } from "./emptyTurnRetry.ts";
+import { createStallWatchdog } from "./streamStallWatchdog.ts";
 import {
   buildSyntheticResponsesFailureId,
   SYNTHETIC_RESPONSES_SEQUENCE_NUMBER,
+  withResponsesFailureContext,
+  type ResponsesStreamContext,
 } from "./responsesSequence.ts";
 
 // Stream handler with disconnect detection - shared for all providers
@@ -23,6 +29,7 @@ import {
 // the watchdog must track upstream byte activity instead. Ported from
 // decolua/9router#1243.
 const DEFAULT_STREAM_STALL_TIMEOUT_MS = STREAM_IDLE_TIMEOUT_MS;
+const SSE_EVENT_BOUNDARY = new TextEncoder().encode("\n\n");
 
 type StreamController = ReturnType<typeof createStreamController>;
 
@@ -113,12 +120,8 @@ function encodeSseEvent(
 
 // Get HH:MM:SS timestamp
 function getTimeString() {
-  return new Date().toLocaleTimeString("en-US", {
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
 }
 
 function isPendingRequestClearedError(error: unknown): boolean {
@@ -179,36 +182,6 @@ function isDeadlineAbortReason(reason: unknown): reason is Error {
     reason instanceof Error &&
     (reason.name === "TimeoutError" || reason.name === "BodyTimeoutError")
   );
-}
-
-function hasClientTerminalSseMarker(text: string, clientResponseFormat?: string | null): boolean {
-  if (/(?:^|\r?\n)data:\s*\[DONE\]\s*(?:\r?\n|$)/.test(text)) {
-    return true;
-  }
-
-  if (isResponsesClientFormat(clientResponseFormat)) {
-    return (
-      /(?:^|\r?\n)event:\s*response\.completed\s*(?:\r?\n|$)/.test(text) ||
-      /"type"\s*:\s*"response\.completed"/.test(text)
-    );
-  }
-
-  if (clientResponseFormat === FORMATS.CLAUDE) {
-    return (
-      /(?:^|\r?\n)event:\s*message_stop\s*(?:\r?\n|$)/.test(text) ||
-      /"type"\s*:\s*"message_stop"/.test(text)
-    );
-  }
-
-  // OpenAI chat completions: some providers omit `data: [DONE]` (already
-  // matched above) and terminate with a finish_reason chunk instead. A
-  // non-null finish_reason value is that terminal signal — a bare
-  // `finish_reason: null` delta chunk must NOT count (#10443).
-  if (clientResponseFormat === FORMATS.OPENAI) {
-    return /"finish_reason"\s*:\s*"[^"]+"/.test(text);
-  }
-
-  return false;
 }
 
 /**
@@ -310,10 +283,14 @@ export function createStreamController({
 
     isConnected: () => !disconnected,
 
+    clearPendingRequest,
+
     // Call when client disconnects
     handleDisconnect: (reason = "client_closed") => {
       if (disconnected) return;
       if (clientTerminalSeen) {
+        // Start the drain before completion releases its registered callback.
+        if (clientDisconnectGracePeriodMs > 0) completedToolHandoffDrain?.();
         controller.handleComplete();
         return;
       }
@@ -460,7 +437,8 @@ export function createStreamController({
 export function buildStreamErrorChunks(
   errorMsg: string,
   statusCode: number,
-  clientResponseFormat?: string | null
+  clientResponseFormat?: string | null,
+  responsesContext: ResponsesStreamContext = {}
 ) {
   const statusMapping = getStreamErrorStatusMapping(statusCode);
   const publicErrorMessage = getPublicErrorMessage(errorMsg, statusCode);
@@ -475,6 +453,10 @@ export function buildStreamErrorChunks(
       sequence_number: SYNTHETIC_RESPONSES_SEQUENCE_NUMBER,
       response: {
         id: buildSyntheticResponsesFailureId(),
+        object: "response",
+        created_at: Math.floor(Date.now() / 1000),
+        model: "unknown",
+        output: [],
         status: "failed",
         error: {
           message: publicErrorMessage,
@@ -484,7 +466,9 @@ export function buildStreamErrorChunks(
       },
     };
 
-    return encodeSseEvent(errorEvent, { event: "response.failed" });
+    return encodeSseEvent(withResponsesFailureContext(errorEvent, responsesContext), {
+      event: "response.failed",
+    });
   }
 
   if (clientResponseFormat === FORMATS.CLAUDE) {
@@ -602,6 +586,7 @@ function resolveSilentCloseOutcome(input: {
   clientTerminalSeen: boolean;
   clientResponseFormat?: string | null;
   contentWatcher: StreamContentWatcher;
+  permitsEmptyTurn?: () => boolean;
 }): SilentCloseOutcome | null {
   if (!input.bytesWereForwarded) return null;
 
@@ -640,7 +625,11 @@ function resolveSilentCloseOutcome(input: {
   const watcher = input.contentWatcher;
   if (watcher.sawError()) return null;
   if (watcher.sawSseFrame() && !watcher.sawContent() && !watcher.sawLegitEmptyTerminal()) {
-    return { kind: "error", reason: "Provider returned empty content" };
+    // A translated/client stop is insufficient: the executed native protocol
+    // must also have supplied an ordinary terminal on a trusted origin.
+    if (!(input.clientTerminalSeen && input.permitsEmptyTurn?.())) {
+      return { kind: "error", reason: "Provider returned empty content" };
+    }
   }
 
   return null;
@@ -649,45 +638,26 @@ function resolveSilentCloseOutcome(input: {
 export function createDisconnectAwareStream(
   transformStream,
   streamController,
-  options: { highWaterMark?: number } = {}
+  options: {
+    highWaterMark?: number;
+    permitsEmptyTurn?: () => boolean;
+    emptyTurnDiagnostics?: () => ReturnType<typeof getEmptyTurnDiagnostics>;
+  } = {}
 ) {
   const reader = transformStream.readable.getReader();
   const writer = transformStream.writable.getWriter();
   const terminalDecoder = new TextDecoder();
+  const terminalWatcher = createClientTerminalWatcher(streamController.clientResponseFormat);
   const contentDecoder = new TextDecoder();
   const contentWatcher = createStreamContentWatcher();
   const completedToolHandoffWatcher = createCompletedResponsesToolHandoffWatcher();
   const toolHandoffDecoder = new TextDecoder();
-  let terminalTail = "";
   let clientTerminalSeen = false;
   let bytesWereForwarded = false;
-  let completedToolHandoffDrainStarted = false;
-
-  const drainCompletedToolHandoff = () => {
-    if (completedToolHandoffDrainStarted) return;
-    completedToolHandoffDrainStarted = true;
-    const gracePeriodMs = Math.max(0, Number(streamController.clientDisconnectGracePeriodMs) || 0);
-    const timeoutReason = "completed_tool_handoff_grace_expired";
-    const timeout = setTimeout(() => {
-      streamController.abort();
-      void Promise.allSettled([reader.cancel(timeoutReason), writer.abort(timeoutReason)]);
-    }, gracePeriodMs);
-
-    void (async () => {
-      try {
-        while (true) {
-          const { done } = await reader.read();
-          if (done) break;
-        }
-        streamController.handleComplete();
-      } catch (error) {
-        streamController.handleError(error);
-      } finally {
-        clearTimeout(timeout);
-      }
-    })();
-  };
-  streamController.registerCompletedToolHandoffDrain?.(drainCompletedToolHandoff);
+  const completionDrain = createCompletionDrain(reader, writer, streamController, () =>
+    clientTerminalSeen ? "terminal_stream_grace_expired" : "completed_tool_handoff_grace_expired"
+  );
+  streamController.registerCompletedToolHandoffDrain?.(completionDrain.start);
 
   const noteClientChunk = (chunk: unknown) => {
     if (!(chunk instanceof Uint8Array)) return;
@@ -703,16 +673,7 @@ export function createDisconnectAwareStream(
     }
     if (clientTerminalSeen) return;
 
-    terminalTail += terminalDecoder.decode(chunk, { stream: true });
-    // Scan before bounding retained state: a compaction terminal frame can
-    // exceed the tail budget because encrypted_content is carried inline.
-    clientTerminalSeen = hasClientTerminalSseMarker(
-      terminalTail,
-      streamController.clientResponseFormat
-    );
-    if (terminalTail.length > 4096) {
-      terminalTail = terminalTail.slice(-4096);
-    }
+    clientTerminalSeen = terminalWatcher.note(terminalDecoder.decode(chunk, { stream: true }));
     if (clientTerminalSeen) {
       streamController.markClientTerminalSeen?.();
     }
@@ -726,12 +687,13 @@ export function createDisconnectAwareStream(
         if (!streamController.isConnected()) {
           // Closing our side alone leaves the upstream body being pulled by the
           // transform pipe. Cancel it so the provider stops generating for a
-          // client that is gone. Not on a completed stream (clientTerminalSeen)
-          // nor while a completed tool handoff is still draining the reader.
-          if (
-            !clientTerminalSeen &&
-            streamController.shouldDeferCompletedToolHandoff?.() !== true
-          ) {
+          // client that is gone. A completed terminal stream with a grace window
+          // hands the inner reader to the bounded drain so late usage can flush.
+          if (clientTerminalSeen) {
+            if (Number(streamController.clientDisconnectGracePeriodMs) > 0) {
+              completionDrain.start();
+            }
+          } else if (streamController.shouldDeferCompletedToolHandoff?.() !== true) {
             const reason = "client_disconnected";
             void Promise.allSettled([reader.cancel(reason), writer.abort(reason)]);
           }
@@ -748,6 +710,7 @@ export function createDisconnectAwareStream(
               clientTerminalSeen,
               clientResponseFormat: streamController.clientResponseFormat,
               contentWatcher,
+              permitsEmptyTurn: options.permitsEmptyTurn,
             });
 
             if (silentClose?.kind === "truncated") {
@@ -766,14 +729,26 @@ export function createDisconnectAwareStream(
                 // downstream may have closed; stream already marked complete
               }
             } else if (silentClose) {
+              console.warn(
+                `[STREAM] detector=post-translation reason=${
+                  silentClose.reason === "Provider returned empty content"
+                    ? "empty-content"
+                    : "missing-terminal"
+                } native=${JSON.stringify(
+                  options.emptyTurnDiagnostics?.() ?? { nativeExecutionObserved: false }
+                )}`
+              );
               streamController.handleError(
                 Object.assign(new Error(silentClose.reason), { statusCode: 502 })
               );
               try {
+                // Isolate generated failure from any unfinished provider data.
+                if (!terminalWatcher.atBoundary()) controller.enqueue(SSE_EVENT_BOUNDARY);
                 for (const chunk of buildStreamErrorChunks(
                   silentClose.reason,
                   502,
-                  streamController.clientResponseFormat
+                  streamController.clientResponseFormat,
+                  terminalWatcher.responsesContext()
                 )) {
                   controller.enqueue(chunk);
                 }
@@ -794,6 +769,10 @@ export function createDisconnectAwareStream(
           noteClientChunk(value);
         } catch (error) {
           if (!streamController.isConnected()) {
+            // A pending pull can lose enqueue to cancellation after the drain takes ownership.
+            if (!completionDrain.isStarted()) {
+              reader.cancel(new Error("Downstream disconnected")).catch(() => {});
+            }
             try {
               controller.close();
             } catch {
@@ -804,6 +783,7 @@ export function createDisconnectAwareStream(
 
           if (clientTerminalSeen) {
             streamController.handleComplete();
+            reader.cancel(new Error("Client terminal seen")).catch(() => {});
             try {
               controller.close();
             } catch {
@@ -815,15 +795,16 @@ export function createDisconnectAwareStream(
           streamController.handleError(error);
 
           // T35: Encapsulate mid-stream errors as SSE events instead of abruptly aborting
-          // This prevents TransferEncodingError on the client side
           const errorMsg = getErrorMessage(error);
           const statusCode = getErrorStatusCode(error);
 
           try {
+            if (!terminalWatcher.atBoundary()) controller.enqueue(SSE_EVENT_BOUNDARY);
             for (const chunk of buildStreamErrorChunks(
               errorMsg,
               statusCode,
-              streamController.clientResponseFormat
+              streamController.clientResponseFormat,
+              terminalWatcher.responsesContext()
             )) {
               controller.enqueue(chunk);
             }
@@ -844,6 +825,11 @@ export function createDisconnectAwareStream(
         const deferCompletedToolHandoff =
           streamController.shouldDeferCompletedToolHandoff?.() === true;
         if (clientTerminalSeen) {
+          if (Number(streamController.clientDisconnectGracePeriodMs) > 0) {
+            completionDrain.start();
+            streamController.handleComplete();
+            return;
+          }
           streamController.handleComplete();
         } else {
           streamController.handleDisconnect(reason || "cancelled");
@@ -908,11 +894,14 @@ export function pipeWithDisconnect(
     return createDisconnectAwareStream(
       { readable: transformedBody, writable: createNoopAbortWritable() },
       streamController,
-      { highWaterMark: opts.highWaterMark }
+      {
+        highWaterMark: opts.highWaterMark,
+        permitsEmptyTurn: () => hasTrustedEmptyTurn(providerResponse),
+        emptyTurnDiagnostics: () => getEmptyTurnDiagnostics(providerResponse),
+      }
     );
   }
 
-  let stallTimer: ReturnType<typeof setTimeout> | null = null;
   let activeTimer: ReturnType<typeof setTimeout> | null = null;
   // Erroring the upstream tap unblocks a downstream reader suspended on the
   // transform pipe; aborting the controller alone does not always do that.
@@ -920,10 +909,11 @@ export function pipeWithDisconnect(
   let stallFired = false;
   let activeFired = false;
 
-  const clearStall = () => {
-    if (stallTimer) clearTimeout(stallTimer);
-    stallTimer = null;
-  };
+  // Per-chunk timer by default; one interval with SSE_STALL_WATCHDOG=interval.
+  const stallWatchdog = createStallWatchdog(stallEnabled ? stallTimeoutMs : 0, () =>
+    triggerWatchdog("stall")
+  );
+  const clearStall = stallWatchdog.clear;
   const clearActive = () => {
     if (activeTimer) clearTimeout(activeTimer);
     activeTimer = null;
@@ -955,11 +945,7 @@ export function pipeWithDisconnect(
       console.debug(`[STREAM-HANDLER] ${kind} watchdog abort failed:`, e);
     }
   };
-  const armStall = () => {
-    if (!stallEnabled) return;
-    clearStall();
-    stallTimer = setTimeout(() => triggerWatchdog("stall"), stallTimeoutMs);
-  };
+  const armStall = stallWatchdog.arm;
   const armActive = () => {
     if (!activeEnabled) return;
     clearActive();
@@ -984,8 +970,10 @@ export function pipeWithDisconnect(
   // with a clear error the client's own retry/fallback logic can react to
   // immediately. Armed at stream start, never re-armed by lifecycle-only
   // bytes (unlike armStall above), restarted by reasoning-progress frames
-  // (a model thinking for minutes before its first token is not stalled),
-  // and cleared permanently the first time real content is observed -- reuses the exact classifier
+  // (a model thinking for minutes before its first token is not stalled)
+  // and by Responses remote-compaction progress frames (#17826 — compaction
+  // is upstream work with no visible output), and cleared permanently the
+  // first time real content is observed -- reuses the exact classifier
   // (createStreamContentWatcher) createDisconnectAwareStream already trusts
   // for its own end-of-stream #8649 empty-content check.
   let contentStallTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1098,17 +1086,30 @@ export function pipeWithDisconnect(
     }, contentStallTimeoutMs);
   };
 
+  // A request-signal abort calls the inner controller directly (bound in
+  // createStreamController), which skips the wrapper below. Watch the same signal so
+  // that path clears the timers too; every normal terminal path detaches the listener.
+  const abortSignal = streamController.signal;
+  const clearOnAbort = () => {
+    clearWatchdogs();
+    clearContentStall();
+  };
+  const detachAbortWatch = () => abortSignal?.removeEventListener?.("abort", clearOnAbort);
+  abortSignal?.addEventListener?.("abort", clearOnAbort, { once: true });
+
   // Wrap controller so every termination path clears all watchdog timers.
   // Without this, abort/complete/error/disconnect paths leave a timer armed
   // and a stale abort could fire after the request has already ended.
   const wrappedController: StreamController = {
     ...streamController,
     handleComplete: () => {
+      detachAbortWatch();
       clearWatchdogs();
       clearContentStall();
       streamController.handleComplete();
     },
     handleError: (e: unknown) => {
+      detachAbortWatch();
       clearWatchdogs();
       clearContentStall();
       // A watchdog already fired its own handleError — the inner pull()
@@ -1118,11 +1119,13 @@ export function pipeWithDisconnect(
       streamController.handleError(e);
     },
     handleDisconnect: (reason?: string) => {
+      detachAbortWatch();
       clearWatchdogs();
       clearContentStall();
       streamController.handleDisconnect(reason);
     },
     abort: () => {
+      detachAbortWatch();
       clearWatchdogs();
       clearContentStall();
       streamController.abort();
@@ -1135,15 +1138,18 @@ export function pipeWithDisconnect(
   // transform so reasoning models that buffer many raw bytes into a single
   // emitted event do not look stalled to either watchdog. Reasoning frames
   // with no visible output (Claude thinking/signature deltas, Responses
-  // reasoning items) restart the content-stall budget instead of clearing it:
-  // the model is still working, but a turn that stops reasoning and only
-  // sends heartbeats afterwards must still be caught.
+  // reasoning items) and Responses remote-compaction progress frames
+  // (#17826) restart the content-stall budget instead of clearing it:
+  // the model is still working, but a turn that stops reasoning or
+  // compacting and only sends heartbeats afterwards must still be caught.
   const upstreamTap = new TransformStream<Uint8Array, Uint8Array>({
     start(controller) {
       upstreamTapController = controller;
       armStall();
       armActive();
       armContentStall();
+      // The request may already be aborted: the abort event fired before the listener.
+      if (abortSignal?.aborted) clearOnAbort();
     },
     transform(chunk, controller) {
       armStall();
@@ -1154,10 +1160,14 @@ export function pipeWithDisconnect(
         stallBytes += chunk.byteLength;
         noteStallText(decoded);
         const reasoningBefore = upstreamContentWatcher.reasoningProgress();
+        const compactionBefore = upstreamContentWatcher.compactionProgress();
         upstreamContentWatcher.note(decoded);
         if (upstreamContentWatcher.sawContent()) {
           clearContentStall();
-        } else if (upstreamContentWatcher.reasoningProgress() > reasoningBefore) {
+        } else if (
+          upstreamContentWatcher.reasoningProgress() > reasoningBefore ||
+          upstreamContentWatcher.compactionProgress() > compactionBefore
+        ) {
           clearContentStall();
           armContentStall();
         }
@@ -1165,6 +1175,7 @@ export function pipeWithDisconnect(
       controller.enqueue(chunk);
     },
     flush() {
+      detachAbortWatch();
       clearWatchdogs();
       clearContentStall();
     },
@@ -1176,6 +1187,10 @@ export function pipeWithDisconnect(
   return createDisconnectAwareStream(
     { readable: transformedBody, writable: createNoopAbortWritable() },
     wrappedController,
-    { highWaterMark: opts.highWaterMark }
+    {
+      highWaterMark: opts.highWaterMark,
+      permitsEmptyTurn: () => hasTrustedEmptyTurn(providerResponse),
+      emptyTurnDiagnostics: () => getEmptyTurnDiagnostics(providerResponse),
+    }
   );
 }

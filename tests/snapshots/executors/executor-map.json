@@ -70,10 +70,20 @@
       "configSource": "<custom-config>",
       "provider": "blackbox-web"
     },
+    "cbai": {
+      "className": "CodeBuddyIntlExecutor",
+      "configSource": "codebuddy-intl",
+      "provider": "codebuddy-intl"
+    },
     "cbcn": {
       "className": "CodeBuddyCnExecutor",
       "configSource": "codebuddy-cn",
       "provider": "codebuddy-cn"
+    },
+    "cerebrium": {
+      "className": "CerebriumExecutor",
+      "configSource": "cerebrium",
+      "provider": "cerebrium"
     },
     "cf": {
       "className": "CloudflareAIExecutor",
@@ -89,6 +99,11 @@
       "className": "ChatGptWebCodexExecutor",
       "configSource": "<custom-config>",
       "provider": "chatgpt-web-codex"
+    },
+    "chatgpt": {
+      "className": "ChatGptExecutor",
+      "configSource": "chatgpt",
+      "provider": "chatgpt"
     },
     "chatgpt-web": {
       "className": "ChatGptWebExecutor",
@@ -154,6 +169,11 @@
       "className": "CodeBuddyCnExecutor",
       "configSource": "codebuddy-cn",
       "provider": "codebuddy-cn"
+    },
+    "codebuddy-intl": {
+      "className": "CodeBuddyIntlExecutor",
+      "configSource": "codebuddy-intl",
+      "provider": "codebuddy-intl"
     },
     "codex": {
       "className": "CodexExecutor",
@@ -430,6 +450,16 @@
       "configSource": "maxai",
       "provider": "maxai"
     },
+    "minimax-code": {
+      "className": "MinimaxCodeExecutor",
+      "configSource": "<custom-config>",
+      "provider": "minimax-code"
+    },
+    "mmcode": {
+      "className": "MinimaxCodeExecutor",
+      "configSource": "<custom-config>",
+      "provider": "minimax-code"
+    },
     "moonshot": {
       "className": "MoonshotExecutor",
       "configSource": "moonshot",
@@ -480,15 +510,15 @@
       "configSource": "oneminai",
       "provider": "oneminai"
     },
-    "opencode": {
-      "className": "OpencodeExecutor",
-      "configSource": "opencode-zen",
-      "provider": "opencode-zen"
-    },
     "opencode-go": {
       "className": "OpencodeExecutor",
       "configSource": "opencode-go",
       "provider": "opencode-go"
+    },
+    "opencode-server": {
+      "className": "OpencodeServerExecutor",
+      "configSource": "opencode-server",
+      "provider": "opencode-server"
     },
     "opencode-zen": {
       "className": "OpencodeExecutor",
@@ -535,6 +565,11 @@
       "configSource": "qoder",
       "provider": "qoder"
     },
+    "replicate": {
+      "className": "ReplicateExecutor",
+      "configSource": "replicate",
+      "provider": "replicate"
+    },
     "stx": {
       "className": "SyntxExecutor",
       "configSource": "<custom-config>",
@@ -575,10 +610,20 @@
       "configSource": "<custom-config>",
       "provider": "tinycms-web"
     },
+    "tm": {
+      "className": "TwinmindExecutor",
+      "configSource": "<custom-config>",
+      "provider": "twinmind"
+    },
     "trae": {
       "className": "TraeExecutor",
       "configSource": "trae",
       "provider": "trae"
+    },
+    "twinmind": {
+      "className": "TwinmindExecutor",
+      "configSource": "<custom-config>",
+      "provider": "twinmind"
     },
     "uc": {
       "className": "UcExecutor",
@@ -686,6 +731,6 @@
       "provider": "zai-web"
     }
   },
-  "keyCount": 137,
+  "keyCount": 146,
   "sharedInstances": []
 }

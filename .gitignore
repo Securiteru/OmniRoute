@@ -313,3 +313,6 @@ _artifacts/
 
 # run-translation.mjs writes the state atomically via a per-process temp file
 /.i18n-state.json.*.tmp
+
+# Scoped tsc incremental state written by the typecheck gates (typecheck:core / open-sse / api)
+.tsbuildinfo-*

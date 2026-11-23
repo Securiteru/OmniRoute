@@ -1,7 +1,11 @@
 import { SignJWT, importPKCS8 } from "jose";
 import { BaseExecutor, ExecuteInput } from "./base.ts";
 import { PROVIDERS } from "../config/constants.ts";
-import { getVertexModelTransport, normalizeVertexModelId } from "../config/vertexModels.ts";
+import {
+  getVertexHost,
+  getVertexModelTransport,
+  normalizeVertexModelId,
+} from "../config/vertexModels.ts";
 
 interface ServiceAccount {
   type: string;

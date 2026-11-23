@@ -61,7 +61,7 @@ OpenRouter connections can store a per-connection `preset` in Advanced Settings.
 
 ## 🎨 Combos
 
-Create model routing combos with 19 public strategies: priority, weighted, round-robin, context-relay, fill-first, p2c (power-of-two choices), random, least-used, cost-optimized, reset-aware, reset-window, headroom, strict-random, auto, lkgp (last-known-good-provider), context-optimized, cache-optimized, **fusion** (fan out to a panel of models in parallel, then synthesize one answer via a judge), and **pipeline**. Each combo chains multiple models with automatic fallback and includes quick templates and readiness checks.
+Create model routing combos with 22 public strategies: priority, weighted, round-robin, context-relay, fill-first, p2c (power-of-two choices), random, least-used, cost-optimized, reset-aware, reset-window, expiry-first, headroom, quota-weighted, strict-random, auto, lkgp (last-known-good-provider), context-optimized, cache-optimized, **fusion** (fan out to a panel of models in parallel, then synthesize one answer via a judge), **pipeline**, and **jev** (an opt-in TypeSafe Jev admission over your ranked list). Each combo chains multiple models with automatic fallback and includes quick templates and readiness checks.
 
 Recent combo improvements:
 
@@ -304,9 +304,9 @@ Multi-device and external operator access is now possible via **scoped sync toke
 
 - **`POST /api/sync/tokens`** — Issue a new sync token (scoped, with optional expiry)
 - **`DELETE /api/sync/tokens/:id`** — Revoke a token
-- **`GET /api/sync/bundle`** — Download a versioned, ETag-keyed JSON snapshot of all non-sensitive settings (passwords redacted)
+- **`GET /api/sync/bundle`** — Download a versioned, ETag-keyed JSON snapshot of the config (authenticated with a sync token only). Auth settings such as the dashboard password are stripped, but provider credentials and API keys are included, so treat the file as a secret
 
-The config bundle is built by `src/lib/sync/bundle.ts`. Consumers compare the `ETag` response header to detect changes without re-downloading the full payload.
+The config bundle is built by `src/lib/sync/bundle.ts`. Consumers compare the `ETag` response header to detect changes without re-downloading the full payload. From the CLI, `omniroute sync bundle <outPath> --token <syncToken>` (or `OMNIROUTE_SYNC_TOKEN`) saves it to an owner-only file.
 
 ---
 
