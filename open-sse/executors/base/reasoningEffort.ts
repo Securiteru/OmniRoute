@@ -100,15 +100,6 @@ export function isSenseNovaDeepSeekV4Flash(provider: string, model: string | und
   return /(?:^|\/)snova(?:\/|$)/.test(modelStr);
 }
 
-export function isSenseNovaDeepSeekV4Flash(provider: string, model: string | undefined): boolean {
-  const modelStr = (model || "").toLowerCase();
-  const isDeepSeekV4Flash =
-    /(?:^|\/)deepseek-v4-flash(?:$|-)/.test(modelStr) && !modelStr.includes("vision");
-  if (!isDeepSeekV4Flash) return false;
-  if (provider === "sensenova" || provider === "snova") return true;
-  return /(?:^|\/)snova(?:\/|$)/.test(modelStr);
-}
-
 type ReasoningSanitizeLog = {
   info?: (tag: string, msg: string) => void;
 };
